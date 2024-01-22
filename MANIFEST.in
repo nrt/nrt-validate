@@ -1,0 +1,4 @@
+include LICENSE README.rst setup.py
+recursive-include docs *.rst
+recursive-include docs *.png
+exclude MANIFEST.in
