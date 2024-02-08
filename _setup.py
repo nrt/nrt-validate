@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import codecs
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 import os
 
 # Parse the version from the main __init__.py
@@ -39,14 +39,16 @@ setup(name='nrt-validate',
           'Programming Language :: Python :: 3.10',
           'Programming Language :: Python :: 3.11',
       ],
-      packages=find_packages(),
+      # packages=find_packages('nrt/*'),
+      packages = find_namespace_packages(include=["nrt.validate"]),
+      package_dir={'': '.'},
       install_requires=[
           'xarray',
-          'ipywidget',
+          'ipywidgets',
           'ipyleaflet',
           'bqplot',
           'ipyevents',
-          'PIL',
+          'Pillow',
           'rioxarray',
           'netCDF4',
           'pandas'
