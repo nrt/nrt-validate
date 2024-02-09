@@ -154,12 +154,19 @@ class Segmentation(HasTraits):
     segments = List()
     breakpoints = List()
 
-    def __init__(self, breakpoints=None, segments=None):
+    def __init__(self, breakpoints=None, segments=None,
+                 labels=['Stable forest',
+                         'Forest dieback',
+                         'Forest recovery',
+                         'Non-forest']):
         super(Segmentation, self).__init__()
         if breakpoints is not None:
             self.breakpoints = breakpoints
         if segments is not None:
             self.segments = segments
+        self.labels = labels
+        self.segment_widgets = ipw.VBox([])
+        self._update_segment_widgets()
 
     @classmethod
     def from_datelist(cls, dates):
@@ -231,6 +238,22 @@ class Segmentation(HasTraits):
         for begin, end in zip(self.breakpoints[:-1], self.breakpoints[1:]):
             segments.append(Segment(begin, end))
         self.segments = segments
+
+
+    @observe('segments')
+    def _observe_segments(self, change):
+        self._update_segment_widgets()
+
+    def _update_segment_widgets(self):
+        """Update the widgets for all segments."""
+        widgets_list = [segment.widget(labels=self.labels) for segment in self.segments]
+        self.segment_widgets.children = widgets_list
+
+    # Your existing methods here
+
+    def display_widgets(self):
+        """Display the widgets for segment management."""
+        display(self.segment_widgets)
 
     def __str__(self):
         message = 'Temporal segmentation with {n} breakpoints and {nn} segments'.format(n=len(self.breakpoints), nn=len(self.segments))
