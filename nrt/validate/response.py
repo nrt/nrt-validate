@@ -9,7 +9,9 @@ import sqlite3
 import numpy as np
 from traitlets import HasTraits, List, observe
 import ipywidgets as ipw
+from bqplot import Scatter, Lines, LinearScale, Axis, Figure
 
+from nrt.validate import indices, composites, utils
 
 class Segment(object):
     """Represents a temporal segment with a beginning and an end, optionally labeled.
@@ -86,7 +88,6 @@ class Segment(object):
         # Commit the changes and close the cursor
         conn.commit()
         cur.close()
-
 
     def widget(self, labels=['forest', 'dieback', 'non-forest']):
         """Create a widget with a label and dropdown for segment label selection."""
@@ -220,6 +221,16 @@ class Segmentation(HasTraits):
             ValueError('Not a valid breakpoint date')
         self.breakpoints = bp
 
+    def add_or_remove_breakpoint(self, date):
+        """If the date provided is already a breakpoint, remove it, otherwise add it
+        """
+        bp = copy.deepcopy(self.breakpoints)
+        if date in bp:
+            bp.remove(date)
+        else:
+            bisect.insort(bp, date)
+        self.breakpoints = bp
+
     def update_marks(self, interface):
         """Given an Interface instance, update its vline attribute"""
         pass
@@ -239,7 +250,6 @@ class Segmentation(HasTraits):
             segments.append(Segment(begin, end))
         self.segments = segments
 
-
     @observe('segments')
     def _observe_segments(self, change):
         self._update_segment_widgets()
@@ -249,8 +259,6 @@ class Segmentation(HasTraits):
         widgets_list = [segment.widget(labels=self.labels) for segment in self.segments]
         self.segment_widgets.children = widgets_list
 
-    # Your existing methods here
-
     def display_widgets(self):
         """Display the widgets for segment management."""
         display(self.segment_widgets)
@@ -258,6 +266,126 @@ class Segmentation(HasTraits):
     def __str__(self):
         message = 'Temporal segmentation with {n} breakpoints and {nn} segments'.format(n=len(self.breakpoints), nn=len(self.segments))
         return message
+
+
+class ChipsTs(HasTraits):
+    """A container of linked chips pannel and bqplot time-series plot
+    """
+    def __init__(self, dates, values, images, segmentation):
+        self.segmentation = segmentation
+        self.values = values
+        self.dates = dates
+        # Create components (ts plot + chips)
+        x_sc = LinearScale()
+        y_sc = LinearScale()
+        # Create axes
+        self.x_ax = Axis(label='Time', scale=x_sc,
+                         tick_format='%m-%Y', tick_rotate=45)
+        self.y_ax = Axis(label='Vegetation Index', scale=y_sc,
+                         orientation='vertical', side='left')
+        # Create scatter marks
+        # TODO: right now univariate, but would be good to allow multiple variables passed as
+        # a dict of arrays
+        vi_values = Scatter(x=dates, y=values,
+                            scales={'x': x_sc, 'y': y_sc})
+        # Create a dummy highlighted point out of view
+        highlighted_point = Scatter(x=[-1000], y=[-1000], # Dummy point out of view
+                                    scales={'x': x_sc, 'y': y_sc},
+                                    preserve_domain={'x': True, 'y': True},
+                                    colors=['red'])
+        # Get the initial vlines from the Segmentation instance
+        vlines = [Lines(x=[bp, bp], y=[0, 1],
+                        scales={'x': x_sc, 'y': y_sc}, colors=['red'])
+                  for bp in segmentation.breakpoints]
+        # Create and display the figure
+        self.tsfig = Figure(marks=[vi_values, highlighted_point, *vlines],
+                            axes=[x_ax, y_ax],
+                            title='Sample temporal profile',
+                            layout=ipw.Layout(width='100%',
+                                              height='400px'))
+
+        # Add event handler to each chip
+        for idx, chip in enumerate(chips):
+            event = Event(source=chip, watched_events = ['mouseenter', 'mouseleave', 'click'])
+            event.on_dom_event(functools.partial(self._handle_chip_event, idx))
+
+        box_layout = ipw.Layout(
+            display='flex',
+            flex_flow='row wrap',
+            align_items='stretch',
+            width='100%',
+            height='800px',  # Set a fixed height (modify as needed)
+            overflow='auto'  # Add scrollability
+        )
+        box = ipw.Box(children=chips, layout=box_layout)
+        self.interface = ipw.VBox([ts_fig, box])
+
+        @classmethod
+        def from_cube_and_geom(cls, ds, geom, segmentation,
+                               compositor=ColorComposite(),
+                               vi_calculator=NDVI(),
+                               window_size=500,
+                               **kwargs):
+            """Instantiate ChipsTs from an xarray Dataset and a geometry
+
+            Geometry and cube/Dataset must share the same coordinate reference system
+
+            Args:
+                ds (xarray.Dataset): The Dataset containing the data to display
+                geom (dict): A geojson geometry (Point or Polygon) around which
+                    Dataset will be cropped and for which index time-series will
+                    be extracted
+                segmentation (nrt.validation.response.Segmentation): Segmentation instance
+                compositor (callable): Callable to transform a temporal slice of the provided
+                    Dataset into a 3D numpy array. See ``nrt.validate.composites`` module
+                    for examples
+                vi_calculator (callable): A callable to process a DataArray containing the
+                    desired index from the dataset. See the ``nrt.validate.indices`` module for
+                    examples and already implemented simple transforms
+                window_size (float): Size of the bounding box used for cropping (created around
+                    the centroid of ``geom``). In CRS unit.
+                **kwargs: Additional arguments passed to ``nrt.validate.utils.get_chips``
+            """
+            dates, values = utils.get_ts(ds=ds, geom=geom,
+                                         vi_calculator=vi_calculator)
+            chips = utils.get_chips(ds=ds, geom=geom, size=window_size,
+                                    compositor=compositor, **kwargs)
+            instance = cls(dates=dates, values=values,
+                           images=chips, segmentation=segmentation)
+            return instance
+
+        def toggle_vline(self, vline):
+            """Add or remove a vline to the instance's tsplot
+            """
+            marks_list = list(self.tsfig.marks)  # Convert to list for easier manipulation
+            if vline in self.tsfig.marks:
+                marks_list.remove(vline)
+            else:
+                marks_list.append(vline)
+            self.tsfig.marks = tuple(marks_list)  # Convert back to tuple
+
+        def _handle_chip_event(self, idx, event):
+            """Change the coordinates of the highlighted point to actual date and value when mouse enters chip"""
+            value = self.values[idx]
+            date = self.dates[idx]
+            vline = Lines(x=[date, date], y=[0, 1],
+                          scales={'x': x_sc, 'y': y_sc}, colors=['red'])
+            if event['type'] == 'mouseenter':
+                highlighted_point.x = [date]
+                highlighted_point.y = [value]
+            if event['type'] == 'mouseleave':
+                # Reset dummy location
+                highlighted_point.x = [-1000]
+                highlighted_point.y = [-1000]
+            if event['type'] == 'click':
+                self.toggle_vline(vline)
+                self.segmentation.add_or_remove_breakpoint(date)
+                if chips[idx].layout.border == '2px solid blue':
+                    # If it has a border, remove it
+                    chips[idx].layout.border = ''
+                else:
+                    chips[idx].layout.border = '2px solid blue'
+
 
 if __name__ == "__main__":
     import doctest
