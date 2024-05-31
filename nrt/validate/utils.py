@@ -7,6 +7,8 @@ import numpy as np
 from affine import Affine
 import rioxarray
 from shapely.geometry import Point, Polygon, shape
+from shapely.affinity import affine_transform
+from rasterio import features
 
 from nrt.validate.composites import SimpleComposite
 from nrt.validate.indices import NDVI
@@ -80,6 +82,39 @@ def get_chips(ds, geom, size, compositor=SimpleComposite(), res=None, scale=4,
         outline_color (str): Color of the (expanded) geometry outline. See the
         `Matplotlib Named Colors Gallery <https://matplotlib.org/stable/gallery/color/named_colors.html#css-colors>`_
 
+    Examples:
+        >>> import xarray as xr
+        >>> from nrt.validate import utils
+        >>> from nrt.validate.composites import TasseledCapComposite
+        >>> import ipywidgets as ipw
+        >>> #TODO: Change the line below with cube from nrt.data package
+        >>> cube = xr.open_dataset('/home/loic/Downloads/czechia_nrt_test.nc')
+        >>> geom_point = {'type': 'Point', 'coordinates': [4813210, 2935950]}
+        >>> geom_poly = {"type": "Polygon", "coordinates": [[[4813283, 2935951],
+        ...                                                  [4813250, 2935998],
+        ...                                                  [4813193, 2936019],
+        ...                                                  [4813159, 2936013],
+        ...                                                  [4813134, 2935956],
+        ...                                                  [4813146, 2935899],
+        ...                                                  [4813204, 2935877],
+        ...                                                  [4813232, 2935869],
+        ...                                                  [4813279, 2935927],
+        ...                                                  [4813277, 2935967],
+        ...                                                  [4813283, 2935951]]]}
+        >>> box_layout = ipw.Layout(display='flex',
+        ...                         flex_flow='row wrap',
+        ...                         align_items='stretch',
+        ...                         width='100%',
+        ...                         height='800px',
+        ...                         overflow='auto')
+        >>> chips_point = utils.get_chips(ds=cube, geom=geom_point, size=300,
+        ...                               compositor=TasseledCapComposite(), res=None)
+        >>> box = ipw.Box(children=chips_point, layout=box_layout)
+        >>> box
+        >>> chips_poly = utils.get_chips(ds=cube, geom=geom_poly, size=200, res=None)
+        >>> box = ipw.Box(children=chips_poly, layout=box_layout)
+        >>> box
+
     Returns:
         list: List of ipywidgets.Image with geometry overlay
     """
@@ -94,7 +129,7 @@ def get_chips(ds, geom, size, compositor=SimpleComposite(), res=None, scale=4,
     imgs = []
     for date in cube_sub.time.values:
         slice_ = cube_sub.sel(time=date)
-        rgb = self.compositor(slice_)
+        rgb = compositor(slice_)
         imgs.append(np2ipw(rgb, geom=geom, transform=transform,
                            res=res, outline_color=outline_color))
     return imgs
@@ -107,21 +142,73 @@ def get_ts(ds, geom, vi_calculator=NDVI()):
         ds (xarray.Dataset): The dataset from which to compute and extract the
             time-series
         geom (dict): A geojson geometry (Point or Polygon). If point, the nearest
-            pixel is extracted; if Polygon, the nearest pixel of the polygon centroid
-            is extracted (at least for now; more advance spatial reductions will
-            probably be added in the future)
+            pixel is extracted; if Polygon, spatial average excluding ``nan``s is
+            computed for each time-step.
         vi_calculator (callable): A callable to process a DataArray containing the
             desired index from the dataset. See the ``nrt.validate.indices`` module for
             examples and already implemented simple transforms
 
+    Examples:
+        >>> import xarray as xr
+        >>> from nrt.validate import utils
+        >>> from nrt.validate.indices import NDVI, CR_SWIR
+        >>> from nrt.validate.xr_transforms import S2CloudMasking
+        >>> import ipywidgets as ipw
+        >>> from bqplot import DateScale, LinearScale, Axis, Scatter, Figure
+
+        >>> cube = xr.open_dataset('/home/loic/Downloads/czechia_nrt_test.nc')
+        >>> geom_point = {'type': 'Point', 'coordinates': [4813210, 2935950]}
+        >>> geom_poly = {"type": "Polygon", "coordinates": [[[4813283, 2935951],
+        ...                                                  [4813250, 2935998],
+        ...                                                  [4813193, 2936019],
+        ...                                                  [4813159, 2936013],
+        ...                                                  [4813134, 2935956],
+        ...                                                  [4813146, 2935899],
+        ...                                                  [4813204, 2935877],
+        ...                                                  [4813232, 2935869],
+        ...                                                  [4813279, 2935927],
+        ...                                                  [4813277, 2935967],
+        ...                                                  [4813283, 2935951]]]}
+        >>> dates, ts_point = utils.get_ts(ds=cube, geom=geom_point,
+        ...                         vi_calculator=utils.combine_transforms(S2CloudMasking(), NDVI()))
+        >>> _, ts_poly = utils.get_ts(ds=cube, geom=geom_poly,
+        ...                         vi_calculator=utils.combine_transforms(S2CloudMasking(), CR_SWIR()))
+        >>> # Visualize using bqplot
+        >>> x_scale = DateScale()
+        >>> y_scale = LinearScale()
+        >>> x_ax = Axis(label='Date', scale=x_scale, tick_format='%m-%Y', tick_rotate=45)
+        >>> y_ax = Axis(label='Value', scale=y_scale, orientation='vertical')
+        >>> point_values = Scatter(x=dates, y=ts_point, scales={'x': x_scale, 'y': y_scale}, colors='green')
+        >>> polygon_values = Scatter(x=dates, y=ts_poly, scales={'x': x_scale, 'y': y_scale}, colors='blue')
+        >>> fig = Figure(marks=[point_values, polygon_values], axes=[x_ax, y_ax])
+        >>> fig
+
     Returns:
         tuple: Tuple of two elements; Array of dates and array of VI values
     """
-    # TODO: handle that differently if it's a point or a polygon
     shape_ = shape(geom)
-    centroid = shape_.centroid
-    cube_sub = ds.sel(x=centroid.x,
-                      y=centroid.y,
-                      method='nearest')
-    da = vi_calculator(cube_sub)
-    return da.time.values, da.values
+    if isinstance(shape_, Point):
+        # Handle point geometry
+        centroid = shape_
+        cube_sub = ds.sel(x=centroid.x, y=centroid.y, method='nearest')
+        da = vi_calculator(cube_sub)
+        return da.time.values, da.values
+
+    elif isinstance(shape_, Polygon):
+        # Handle polygon geometry
+        ds_clipped = ds.rio.clip([geom])
+        da = vi_calculator(ds_clipped)
+        spatial_avg = da.mean(dim=['x', 'y'], skipna=True)
+        return spatial_avg.time.values, spatial_avg.values
+    else:
+        raise ValueError('Unsuported geometry type')
+
+
+def combine_transforms(*transforms):
+    """Utility function to combine multiple transforms"""
+    def combined(ds):
+        for transform in transforms:
+            ds = transform(ds)
+        return ds
+    return combined
+

@@ -72,3 +72,54 @@ class SimpleComposite(BaseComposite):
         rgb_stretched = self.stretch(rgb, self.blim, self.glim, self.rlim)
         return rgb_stretched
 
+
+class TasseledCapComposite(BaseComposite):
+    def __init__(self, blue='B02_20', green='B03_20', red='B04_20',
+                 nir='B8A', swir1='B11', swir2='B12',
+                 rlim=[1500,10000], glim=[200,6000], blim=[0,1200]):
+        """Compute greenness, brightness and wetness from S2 L2A data and
+        assemble the three components into a color composite
+
+        Args:
+            blue, green, red, nir, swir1, swir2 (str): Variable names in the input
+                xarray Dataset
+            blim, glim, rlim (list): Stretching limits for blue, green, and red bands.
+        """
+        self.blue = blue
+        self.green = green
+        self.red = red
+        self.nir = nir
+        self.swir1 = swir1
+        self.swir2 = swir2
+        self.blim = blim
+        self.glim = glim
+        self.rlim = rlim
+
+    def greenness(self, ds):
+        da = (-0.2848 * ds[self.blue]) - (0.2435 * ds[self.green]) \
+             - (0.5436 * ds[self.red]) + (0.7243 * ds[self.nir]) \
+             + (0.0840 * ds[self.swir1]) - (0.1800 * ds[self.swir2])
+        return da
+
+    def brightness(self, ds):
+        da = (0.3037 * ds[self.blue]) + (0.2793 * ds[self.green]) \
+             + (0.4743 * ds[self.red]) + (0.5585 * ds[self.nir]) \
+             + (0.5082 * ds[self.swir1] + 0.1863 * ds[self.swir2])
+        return da
+
+    def wetness(self, ds):
+        da = (0.1509 * ds[self.blue] + 0.1973 * ds[self.green]) \
+             + (0.3279 * ds[self.red] + 0.3406 * ds[self.nir]) \
+             - (0.7112 * ds[self.swir1] - 0.4572 * ds[self.swir2])
+        return da
+
+    def __call__(self, ds):
+        greenness = self.greenness(ds)
+        brightness = self.brightness(ds)
+        wetness = self.wetness(ds)
+        # Extract the specified bands as numpy arrays
+        rgb = np.stack([brightness.values, greenness.values, wetness.values],
+                       axis=-1)
+        # Apply stretching
+        rgb_stretched = self.stretch(rgb, self.blim, self.glim, self.rlim)
+        return rgb_stretched

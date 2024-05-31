@@ -13,6 +13,7 @@ from bqplot import Scatter, Lines, LinearScale, Axis, Figure
 
 from nrt.validate import indices, composites, utils
 
+
 class Segment(object):
     """Represents a temporal segment with a beginning and an end, optionally labeled.
 
