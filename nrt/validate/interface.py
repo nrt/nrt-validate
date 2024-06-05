@@ -1,17 +1,21 @@
 import copy, bisect
 import functools
 
-from traitlets import HasTraits
+from traitlets import HasTraits, Int, List, observe
 from IPython.display import display
 import ipywidgets as ipw
 from ipyevents import Event
 import numpy as np
+from bqplot import Scatter, Lines, LinearScale, DateScale, Axis, Figure
 
 from nrt.validate import utils
 from nrt.validate.composites import SimpleComposite
+from nrt.validate.indices import *
 
 
 class Chips(HasTraits):
+    breakpoints = List()
+    highlight = Int(allow_none=True)
     """A container with observable traits and many elementary methods to host image chips
 
     Examples:
@@ -32,7 +36,7 @@ class Chips(HasTraits):
     def __init__(self, dates, images, breakpoints=[]):
         self.dates = dates
         self.images = images
-        self.breakpoints = breakpoints # Should this one be observed?
+        self.breakpoints = breakpoints
         box_layout = ipw.Layout(
             display='flex',
             flex_flow='row wrap',
@@ -107,3 +111,117 @@ class Chips(HasTraits):
 
     def display(self):
         display(self.widget)
+
+
+class Vits(HasTraits):
+    breakpoints = List()
+    """Handle and display the vegetation index time-series
+    """
+    def __init__(self, dates, values,
+                 breakpoints=[], default_vi='NDVI'):
+        self.x_sc = DateScale()
+        self.y_sc = LinearScale()
+        self.dates = dates
+        self.values = values # Let's say this is a dict
+        self.default_vi = default_vi
+        self.current_vi = default_vi
+        # Dummy bqplot highlighted point out of view
+        self.vi_values = Scatter(x=self.dates, y=self.values[self.default_vi],
+                                 scales={'x': self.x_sc, 'y': self.y_sc})
+        self.highlighted_point = Scatter(x=[-1000], y=[-1000],
+                                         scales={'x': self.x_sc, 'y': self.y_sc},
+                                         preserve_domain={'x': True, 'y': True},
+                                         colors=['red'])
+        self.vlines = [self._create_vline(bp) for bp in self.breakpoints]
+        self.plot = self._create_plot()
+        self.breakpoints = breakpoints
+
+    @classmethod
+    def from_cube_and_geom(cls, ds, geom, breakpoints=[],
+                           vis={'NDVI': NDVI(),
+                                'CR-SWIR': CR_SWIR()},
+                           default_vi='NDVI'):
+        """Instantiate Vits from an xarray Dataset and a geometry
+
+        Geometry and cube/Dataset must share the same coordinate reference system
+
+        Args:
+            ds (xarray.Dataset): The Dataset containing the data to display
+            geom (dict): A geojson geometry (Point or Polygon) with which the
+                time-series will be extracted (nearest pixel in case of Point,
+                spatial average for Polygons)
+            breakpoints (list): Optional list of dates
+            vis (dict): Dictionary of callables to compute vegetation indices
+                see ``nrt.validate.indices`` module for examples and already implemented
+                indices
+        """
+        values = {k:utils.get_ts(ds=ds,
+                                 geom=geom,
+                                 vi_calculator=v)[1] for k,v in vis.items()}
+        dates = ds.time.values
+        instance = cls(dates=dates,
+                       values=values,
+                       breakpoints=breakpoints,
+                       default_vi=default_vi)
+        return instance
+
+    def _create_vline(self, bp):
+        return Lines(x=[bp, bp], y=[0, 1],
+                     scales={'x': self.x_sc, 'y': self.y_sc},
+                     colors=['red'])
+
+    def _create_plot(self):
+        # Create axes
+        x_ax = Axis(label='Dates (Year-month)', scale=self.x_sc,
+                    tick_format='%m-%Y', tick_rotate=0)
+        y_ax = Axis(label='Vegetation Index', scale=self.y_sc,
+                    orientation='vertical', side='left')
+        # Create and display the figure
+        self.figure = Figure(marks=[self.vi_values,
+                                    self.highlighted_point,
+                                    *self.vlines],
+                       axes=[x_ax, y_ax],
+                       title='Sample temporal profile',
+                       layout=ipw.Layout(width='100%',
+                                         height='400px'),
+                       animation_duration=500)
+
+        # Add a dropdown widget to select VI
+        dropdown = ipw.Dropdown(options=self.values.keys(),
+                                value=self.default_vi,
+                                description='Index:')
+
+        def update_scatter(change):
+            self.vi_values.y = self.values[change['new']]
+            self.current_vi = change['new']
+
+        dropdown.observe(update_scatter, names='value')
+        return ipw.VBox([dropdown, self.figure])
+
+    def update_highlighted_point(self, idx):
+        """Update the coordinates of the highlighted point based on idx.
+
+        Args:
+            idx (int or None): Index of the point to highlight or None.
+        """
+        if idx is not None:
+            self.highlighted_point.x = [self.dates[idx]]
+            self.highlighted_point.y = [self.values[self.current_vi][idx]]
+        else:
+            self.highlighted_point.x = [-1000]
+            self.highlighted_point.y = [-1000]
+
+    @observe('breakpoints')
+    def redraw_vlines(self, change):
+        """Method to be called when a change event is detected on breakpoints
+        """
+        self.vlines = [self._create_vline(bp) for bp in self.breakpoints]
+        # Update the figure with the new vlines
+        self.figure.marks = [self.vi_values,
+                             self.highlighted_point,
+                             *self.vlines]
+
+    def display(self):
+        display(self.plot)
+
+
