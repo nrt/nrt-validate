@@ -1,7 +1,7 @@
 import copy, bisect
 import functools
 
-from traitlets import HasTraits, Int, List, observe
+from traitlets import HasTraits, Int, Unicode, List, observe
 from IPython.display import display
 import ipywidgets as ipw
 from ipyevents import Event
@@ -11,6 +11,7 @@ from bqplot import Scatter, Lines, LinearScale, DateScale, Axis, Figure
 from nrt.validate import utils
 from nrt.validate.composites import SimpleComposite
 from nrt.validate.indices import *
+from nrt.validate.fitting import PartitionedHarmonicTrendModel
 
 
 class Chips(HasTraits):
@@ -115,16 +116,18 @@ class Chips(HasTraits):
 
 class Vits(HasTraits):
     breakpoints = List()
+    order = Int(1) # HArmonic order
+    current_vi = Unicode('NDVI')
     """Handle and display the vegetation index time-series
     """
     def __init__(self, dates, values,
                  breakpoints=[], default_vi='NDVI'):
+        super().__init__()
         self.x_sc = DateScale()
         self.y_sc = LinearScale()
         self.dates = dates
         self.values = values # Let's say this is a dict
         self.default_vi = default_vi
-        self.current_vi = default_vi
         # Dummy bqplot highlighted point out of view
         self.vi_values = Scatter(x=self.dates, y=self.values[self.default_vi],
                                  scales={'x': self.x_sc, 'y': self.y_sc})
@@ -133,6 +136,9 @@ class Vits(HasTraits):
                                          preserve_domain={'x': True, 'y': True},
                                          colors=['red'])
         self.vlines = [self._create_vline(bp) for bp in self.breakpoints]
+        # Smooth fit lines
+        self.model = PartitionedHarmonicTrendModel(dates)
+        self.fitted_lines = self._create_fit_lines()
         self.plot = self._create_plot()
         self.breakpoints = breakpoints
 
@@ -179,7 +185,8 @@ class Vits(HasTraits):
         # Create and display the figure
         self.figure = Figure(marks=[self.vi_values,
                                     self.highlighted_point,
-                                    *self.vlines],
+                                    *self.vlines,
+                                    *self.fitted_lines],
                        axes=[x_ax, y_ax],
                        title='Sample temporal profile',
                        layout=ipw.Layout(width='100%',
@@ -187,16 +194,24 @@ class Vits(HasTraits):
                        animation_duration=500)
 
         # Add a dropdown widget to select VI
-        dropdown = ipw.Dropdown(options=self.values.keys(),
-                                value=self.default_vi,
-                                description='Index:')
+        dropdown_vi = ipw.Dropdown(options=self.values.keys(),
+                                   value=self.default_vi,
+                                   description='Index:')
+        dropdown_order = ipw.Dropdown(options=[0,1,2,3,4,5],
+                                      value=1,
+                                      description='Order:')
 
         def update_scatter(change):
             self.vi_values.y = self.values[change['new']]
             self.current_vi = change['new']
 
-        dropdown.observe(update_scatter, names='value')
-        return ipw.VBox([dropdown, self.figure])
+        def update_order(change):
+            self.order = change['new']
+
+        dropdown_vi.observe(update_scatter, names='value')
+        dropdown_order.observe(update_order, names='value')
+        return ipw.VBox([ipw.HBox([dropdown_vi, dropdown_order]),
+                         self.figure])
 
     def update_highlighted_point(self, idx):
         """Update the coordinates of the highlighted point based on idx.
@@ -211,6 +226,22 @@ class Vits(HasTraits):
             self.highlighted_point.x = [-1000]
             self.highlighted_point.y = [-1000]
 
+    def _create_fit_lines(self):
+        dates, predictions = self.model.fit_predict(self.values[self.current_vi],
+                                                    self.breakpoints,
+                                                    self.order)
+        return  [Lines(x=d, y=p, scales={'x': self.x_sc, 'y': self.y_sc},
+                       colors=['grey'])
+                 for d,p in zip(dates, predictions)]
+
+    @observe('breakpoints', 'order', 'current_vi')
+    def redraw_fit_lines(self, change):
+        self.fitted_lines = self._create_fit_lines()
+        self.figure.marks = [self.vi_values,
+                             self.highlighted_point,
+                             *self.vlines,
+                             *self.fitted_lines]
+
     @observe('breakpoints')
     def redraw_vlines(self, change):
         """Method to be called when a change event is detected on breakpoints
@@ -219,7 +250,8 @@ class Vits(HasTraits):
         # Update the figure with the new vlines
         self.figure.marks = [self.vi_values,
                              self.highlighted_point,
-                             *self.vlines]
+                             *self.vlines,
+                             *self.fitted_lines]
 
     def display(self):
         display(self.plot)
