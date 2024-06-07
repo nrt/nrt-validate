@@ -21,13 +21,15 @@ classifiers = [
 ]
 requires-python = ">= 3.9"
 dependencies = ["xarray", "ipywidgets", "ipyleaflet", "bqplot",
-                "ipyevents", "Pillow", "rioxarray", "netCDF4", "pandas"]
+                "ipyevents", "Pillow", "rioxarray", "netCDF4",
+                "pandas", "rtree", "shapely", "traitlets"]
 
 [project.urls]
-homepage = "https://code.europa.eu/jrc-forest/nrt"
+homepage = "https://code.europa.eu/jrc-forest/nrt-validate"
 
 [project.optional-dependencies]
 dask = ["dask"]
+stac = ["pystac-client", "odc-stac"]
 docs = ["sphinx", "sphinx_rtd_theme", "matplotlib", "sphinx-gallery"]
 
 [tool.setuptools.packages.find]
