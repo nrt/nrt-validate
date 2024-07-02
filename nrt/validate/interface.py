@@ -124,7 +124,8 @@ class Vits(HasTraits):
                  breakpoints=[], default_vi='NDVI'):
         super().__init__()
         self.x_sc = DateScale()
-        self.y_sc = LinearScale()
+        self.y_sc = LinearScale(min=float(np.nanmin(values[default_vi])),
+                                max=float(np.nanmax(values[default_vi])))
         self.dates = dates
         self.values = values # Let's say this is a dict
         self.default_vi = default_vi
@@ -172,7 +173,7 @@ class Vits(HasTraits):
         return instance
 
     def _create_vline(self, bp):
-        return Lines(x=[bp, bp], y=[0, 1],
+        return Lines(x=[bp, bp], y=[-1000, 1000],
                      scales={'x': self.x_sc, 'y': self.y_sc},
                      colors=['red'])
 
@@ -203,6 +204,8 @@ class Vits(HasTraits):
 
         def update_scatter(change):
             self.vi_values.y = self.values[change['new']]
+            self.y_sc.min = float(np.nanmin(self.values[change['new']]))
+            self.y_sc.max = float(np.nanmax(self.values[change['new']]))
             self.current_vi = change['new']
 
         def update_order(change):
