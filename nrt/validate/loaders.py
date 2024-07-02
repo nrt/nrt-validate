@@ -168,7 +168,7 @@ class STACLoader(BaseLoader):
 
         feature = self.fc[idx]
         unique_idx = feature['properties'][self.key]
-        bbox = shape(feature['geometry']).centroid.buffer(self.window_size / 2).bounds
+        bbox = shape(feature['geometry']).centroid.buffer(self.window_size / 2.0).bounds
         gbox = GeoBox.from_bbox(bbox, crs=self.crs, resolution=self.res)
 
         query = self.client.search(

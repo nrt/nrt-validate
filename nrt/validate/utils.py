@@ -122,7 +122,7 @@ def get_chips(ds, geom, size, compositor=SimpleComposite(), res=None, scale=4,
         res = ds.rio.resolution()[0]
     shape_ = shape(geom)
     centroid = shape_.centroid
-    bbox = centroid.buffer(size).bounds
+    bbox = centroid.buffer(size/2.0).bounds
     cube_sub = ds.rio.clip_box(*bbox)
     cube_sub = cube_sub.rio.pad_box(*bbox, constant_values=0)
     transform = cube_sub.rio.transform()
