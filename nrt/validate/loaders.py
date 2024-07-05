@@ -10,6 +10,8 @@ have at least a __len__ method. Data returned by subscript are in the form of a
 TODOs/questions:
     - Should WKT geometries be stored in the database? To facilitate disaster recovery
     - CRS handling, none for now. Needed? Yes, it may be needed for webmap overlay. 
+    - The dates array must be numpy.datetime64 with Day precision. Document that
+      somewhere for people who wish to write their own loader
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union, Callable, TYPE_CHECKING
@@ -187,6 +189,8 @@ class STACLoader(BaseLoader):
             resampling=self.resampling,
             fail_on_error=False
         ).compute()
+        # 'Reduce' time precision for compatibility with segments module 
+        ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
 
         dates = ds.time.values
         values = {
@@ -343,6 +347,8 @@ class FileLoader(BaseLoader):
 
     def __getitem__(self, idx):
         ds = self._find_intersects(idx)
+        # 'Reduce' time precision for compatibility with segments module
+        ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
         feature = self.fc[idx]
         unique_idx = feature['properties'][self.key]
         dates = ds.time.values
