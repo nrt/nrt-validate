@@ -11,6 +11,7 @@ from typing import List
 
 import numpy as np
 from traitlets import HasTraits, observe, List as TraitletsList
+import ipywidgets as ipw
 
 
 class Segment(object):
@@ -100,6 +101,20 @@ class Segment(object):
                                                                                   label=label)
         return s
 
+    def widget(self, labels=['forest', 'dieback', 'non-forest']):
+        """Create a widget with a label and dropdown for segment label selection."""
+        def on_change(change):
+            if change['type'] == 'change' and change['name'] == 'value':
+                self.label = change['new']
+
+        segment_info = ipw.Label(value=f"Segment from {self.begin} to {self.end}")
+        dropdown = ipw.Dropdown(options=labels, description='Label:',
+                                value=self.label)
+        dropdown.observe(on_change)
+        # Use VBox to vertically stack the label and dropdown
+        widget_box = ipw.VBox([segment_info, dropdown])
+        return widget_box
+
 
 class Segmentation(HasTraits):
     """Container for segmentation with observable traits
@@ -124,7 +139,8 @@ class Segmentation(HasTraits):
         >>> # Open a sqlite3 connection
         >>> conn = sqlite3.connect(':memory:')
 
-        >>> seg = Segmentation.from_datelist(random_dates, conn)
+        >>> seg = Segmentation.from_datelist(random_dates, conn,
+        ...                                  labels=['a', 'b'])
         >>> print(seg)
         Temporal segmentation with 2 breakpoints and 1 segments
         >>> seg.add_breakpoint(np.datetime64('2006-11-21'))
@@ -145,15 +161,24 @@ class Segmentation(HasTraits):
     segments: List[Segment] = TraitletsList()
     breakpoints: List[np.datetime64] = TraitletsList()
     conn: sqlite3.Connection
+    labels: List[str]
 
-    def __init__(self, conn, breakpoints=None, segments=None):
+    def __init__(self, conn, breakpoints=None, segments=None,
+                 labels=['Stable forest',
+                         'Forest dieback',
+                         'Forest recovery',
+                         'Non-forest']):
         super(Segmentation, self).__init__()
-        self.breakpoints = breakpoints if breakpoints else []
-        self.segments = segments if segments else []
-        self.conn = conn
+        with self.hold_trait_notifications():
+            self.breakpoints = breakpoints if breakpoints else []
+            self.segments = segments if segments else []
+            self.conn = conn
+            self.labels = labels
+            self.segment_widgets = ipw.VBox([])
+            self._update_segment_widgets()
 
     @classmethod
-    def from_datelist(cls, dates, conn):
+    def from_datelist(cls, dates, conn, labels):
         """Create a Segmentation instance from a list of dates.
 
         Assigns a single temporal segment spanning the entire time-series
@@ -167,12 +192,12 @@ class Segmentation(HasTraits):
         """
         begin = min(dates)
         end = max(dates)
-        instance = cls(conn=conn)
+        instance = cls(conn=conn, labels=labels)
         instance.breakpoints = [begin, end]
         return instance
 
     @classmethod
-    def from_db(cls, feature_id, conn):
+    def from_db(cls, feature_id, conn, labels):
         """
         Create a Segmentation instance from the database using the feature ID.
 
@@ -186,11 +211,12 @@ class Segmentation(HasTraits):
         segments_idx = cls.get_db_idx(feature_id, conn)
         segments = [Segment.from_db(idx, conn=conn) for idx in segments_idx]
         breakpoints = cls.compute_breakpoints(segments)
-        instance = cls(conn=conn, breakpoints=breakpoints, segments=segments)
+        instance = cls(conn=conn, breakpoints=breakpoints,
+                       segments=segments, labels=labels)
         return instance
 
     @classmethod
-    def from_db_or_datelist(cls, feature_id, conn, dates):
+    def from_db_or_datelist(cls, feature_id, conn, dates, labels):
         """
         Create a Segmentation instance either from the database or from a list of dates.
 
@@ -203,9 +229,9 @@ class Segmentation(HasTraits):
             Segmentation: An instance of the Segmentation class.
         """
         if cls.exists(feature_id, conn):
-            return cls.from_db(feature_id, conn)
+            return cls.from_db(feature_id, conn, labels)
         else:
-            return cls.from_datelist(dates, conn)
+            return cls.from_datelist(dates, conn, labels)
 
     @staticmethod
     def exists(feature_id, conn):
@@ -335,6 +361,16 @@ class Segmentation(HasTraits):
         """
         self.segments = [Segment(begin, end) for begin, end in
                          zip(self.breakpoints[:-1], self.breakpoints[1:])]
+
+    @observe('segments')
+    def _update_segment_widgets(self, change=None):
+        """Update the widgets for all segments."""
+        widgets_list = [segment.widget(labels=self.labels) for segment in self.segments]
+        self.segment_widgets.children = widgets_list
+
+    def display_widgets(self):
+        """Display the widgets for segment management."""
+        display(self.segment_widgets)
 
     def __str__(self):
         message = 'Temporal segmentation with {n} breakpoints and {nn} segments'.format(n=len(self.breakpoints), nn=len(self.segments))

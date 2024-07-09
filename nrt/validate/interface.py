@@ -1,17 +1,33 @@
 import copy, bisect
 import functools
+from typing import Dict, TYPE_CHECKING
+import sqlite3
 
 from traitlets import HasTraits, Int, Unicode, List, observe
 from IPython.display import display
 import ipywidgets as ipw
 from ipyevents import Event
+from ipyleaflet import GeoJSON
 import numpy as np
 from bqplot import Scatter, Lines, LinearScale, DateScale, Axis, Figure
+from shapely.geometry import shape, mapping, Point
+from rasterio import warp # TODO: use pyproj instead
+from rasterio.crs import CRS
 
 from nrt.validate import utils
 from nrt.validate.composites import SimpleComposite
 from nrt.validate.indices import *
 from nrt.validate.fitting import PartitionedHarmonicTrendModel
+from nrt.validate.segments import Segmentation
+
+if TYPE_CHECKING:
+    from nrt.validate.loader import BaseLoader
+    from ipyleaflet import Map
+
+
+class SegmentLabellingMenu:
+    pass
+
 
 
 class Chips(HasTraits):
@@ -46,6 +62,7 @@ class Chips(HasTraits):
             height='800px',  # Set a fixed height (modify as needed)
             overflow='auto'  # Add scrollability
         )
+        self.box_layout = box_layout
         self.widget = ipw.Box(children=self.images,
                               layout=box_layout)
         self.highlight = None # This is a trait that changes when individual chips are hovered
@@ -59,6 +76,27 @@ class Chips(HasTraits):
         for bp in self.breakpoints:
             idx = np.where(self.dates == bp)[0][0]
             self.images[idx].layout.border = '2px solid blue'
+
+    def update(self, dates, images, breakpoints=[]):
+        """Update all elements without requiring creation of a new instance
+        """
+        self.dates = dates
+        self.images = images
+        self.breakpoints = breakpoints
+        self.widget = ipw.Box(children=self.images,
+                              layout=self.box_layout)
+        self.highlight = None # This is a trait that changes when individual chips are hovered
+        # Add event handler to each chip
+        for idx, image in enumerate(self.images):
+            event = Event(source=image,
+                          watched_events = ['mouseenter', 'mouseleave', 'click'])
+            event.on_dom_event(functools.partial(self._handle_chip_event, idx))
+
+        # Add border around chips for breakpoints present at instantiation
+        for bp in self.breakpoints:
+            idx = np.where(self.dates == bp)[0][0]
+            self.images[idx].layout.border = '2px solid blue'
+
 
     @classmethod
     def from_cube_and_geom(cls, ds, geom, breakpoints=[],
@@ -259,4 +297,119 @@ class Vits(HasTraits):
     def display(self):
         display(self.plot)
 
+
+class SegmentsLabellingInterface(HasTraits):
+    current_idx = Int()
+    def __init__(self, loader: 'BaseLoader', webmap: 'Map',
+                 res: float,
+                 labels: list, db_path: str = ':memory:'):
+        self.current_idx = 0
+        self.conn = sqlite3.connect(db_path)
+        self.loader = loader
+        self.webmap = webmap
+        self.res = res
+        self.labels = labels
+        # Layouts
+        self.webmap_layout = ipw.Layout(width='30%')
+        self.chips_layout = ipw.Layout(width='70%')
+        self.sidebar_layout = ipw.Layout(width='30%')
+        self.vits_layout = ipw.Layout(width='70%')
+        # 
+        self.navigation_menu = ipw.Dropdown(options=range(len(loader)),
+                                            value=self.current_idx)
+        # Get data of first sample and build interface 
+        fid, dates, images, values, geom, crs = self.loader[self.current_idx]
+        self.seg = Segmentation.from_db_or_datelist(
+            feature_id=fid,
+            conn=self.conn,
+            dates=dates,
+            labels=self.labels)
+        self.chips = Chips(dates, images, self.seg.breakpoints)
+        self.vits = Vits(dates, values, self.seg.breakpoints)
+        self.draw_webmap(geom=geom, res=self.res, crs=crs)
+        # Apply layout
+        self.vits.plot.layout = self.vits_layout
+        self.chips.widget.layout = self.chips_layout
+        # interface
+        self.sidebar = ipw.VBox([self.navigation_menu,
+                                 self.seg.segment_widgets])
+        self.interface = ipw.VBox([
+            ipw.HBox([self.vits.plot, self.webmap]),
+            ipw.HBox([self.chips.widget, self.sidebar])
+        ])
+        # Connections between elements
+        self.chips.observe(self._on_chip_hover, names=['highlight'])
+        self.chips.observe(self._on_chip_click, names=['breakpoints'])
+        self.navigation_menu.observe(self._on_idx_change, names=['value'])
+
+    def _on_idx_change(self, change):
+        self.current_idx = change['new']
+
+    @observe('current_idx')
+    def update_interface(self, change):
+        """Current idx just changed, new data need to be loaded and the displayed
+        elements updated accordingly
+        """
+        fid, dates, images, values, geom, crs = self.loader[change['new']]
+        self.seg = Segmentation.from_db_or_datelist(
+            feature_id=fid,
+            conn=self.conn,
+            dates=dates,
+            labels=self.labels)
+        self.chips = Chips(dates, images, self.seg.breakpoints)
+        self.vits = Vits(dates, values, self.seg.breakpoints)
+        # Apply layout
+        self.vits.plot.layout = self.vits_layout
+        self.chips.widget.layout = self.chips_layout
+        # Update elements of the interface (oroginally immutable)
+        first_row = list(self.interface.children[0].children) # vits, webmap
+        second_row = list(self.interface.children[1].children) # chips, sidebar
+        first_row[0] = self.vits.plot
+        second_row[0] = self.chips.widget
+        self.interface.children[0].children = tuple(first_row)
+        self.interface.children[1].children = tuple(second_row)
+        # Re-set callbacks (is that actually necessary)
+        self.chips.observe(self._on_chip_hover, names=['highlight'])
+        self.chips.observe(self._on_chip_click, names=['breakpoints'])
+        # Update webmap
+        self.update_webmap(geom=geom,
+                           res=self.res,
+                           crs=crs)
+
+    def _on_chip_hover(self, change):
+        self.vits.update_highlighted_point(change['new'])
+
+    def _on_chip_click(self, change):
+        self.vits.breakpoints = copy.deepcopy(change['new'])
+        self.seg.breakpoints = copy.deepcopy(change['new'])
+
+    def display(self):
+        return self.interface
+
+    def load_sample(self, idx):
+        # Get 6 element tuple from loader
+        # Check if sample already exist in the database and build breakpoints accordingly
+        pass
+
+    def draw_webmap(self, geom, res, crs):
+        # Simply creates a geometry, add it to the map and center the map on it
+        current_shape = shape(geom)
+        if isinstance(current_shape, Point):
+            current_shape = current_shape.buffer(res/2, cap_style=3)
+        # TODO: use shapely ops + pyproj here instead of rasterio
+        current_geom = warp.transform_geom(src_crs = crs,
+                                           dst_crs = CRS.from_epsg(4326),
+                                           geom=mapping(current_shape))
+        centroid = shape(current_geom).centroid
+        webmap_geom = GeoJSON(data=current_geom,
+                               style = {'opacity': 1, 'fillOpacity': 0,
+                                        'weight': 1, 'color': 'magenta'})
+        self.webmap.add(webmap_geom)
+        self.webmap.center = [centroid.y, centroid.x]
+        self.webmap.zoom = 17
+
+    def update_webmap(self, geom, res, crs):
+        # Remove the last layer (that's normally where the GeoJSON layer is; to be improved)
+        self.webmap.layers = self.webmap.layers[:-1]
+        self.draw_webmap(geom, res, crs)
 
