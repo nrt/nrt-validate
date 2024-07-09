@@ -25,10 +25,6 @@ if TYPE_CHECKING:
     from ipyleaflet import Map
 
 
-class SegmentLabellingMenu:
-    pass
-
-
 
 class Chips(HasTraits):
     breakpoints = List()
@@ -58,7 +54,7 @@ class Chips(HasTraits):
             display='flex',
             flex_flow='row wrap',
             align_items='stretch',
-            width='100%',
+            width='70%',
             height='800px',  # Set a fixed height (modify as needed)
             overflow='auto'  # Add scrollability
         )
@@ -76,27 +72,6 @@ class Chips(HasTraits):
         for bp in self.breakpoints:
             idx = np.where(self.dates == bp)[0][0]
             self.images[idx].layout.border = '2px solid blue'
-
-    def update(self, dates, images, breakpoints=[]):
-        """Update all elements without requiring creation of a new instance
-        """
-        self.dates = dates
-        self.images = images
-        self.breakpoints = breakpoints
-        self.widget = ipw.Box(children=self.images,
-                              layout=self.box_layout)
-        self.highlight = None # This is a trait that changes when individual chips are hovered
-        # Add event handler to each chip
-        for idx, image in enumerate(self.images):
-            event = Event(source=image,
-                          watched_events = ['mouseenter', 'mouseleave', 'click'])
-            event.on_dom_event(functools.partial(self._handle_chip_event, idx))
-
-        # Add border around chips for breakpoints present at instantiation
-        for bp in self.breakpoints:
-            idx = np.where(self.dates == bp)[0][0]
-            self.images[idx].layout.border = '2px solid blue'
-
 
     @classmethod
     def from_cube_and_geom(cls, ds, geom, breakpoints=[],
@@ -311,7 +286,6 @@ class SegmentsLabellingInterface(HasTraits):
         self.labels = labels
         # Layouts
         self.webmap_layout = ipw.Layout(width='30%')
-        self.chips_layout = ipw.Layout(width='70%')
         self.sidebar_layout = ipw.Layout(width='30%')
         self.vits_layout = ipw.Layout(width='70%')
         # 
@@ -329,7 +303,6 @@ class SegmentsLabellingInterface(HasTraits):
         self.draw_webmap(geom=geom, res=self.res, crs=crs)
         # Apply layout
         self.vits.plot.layout = self.vits_layout
-        self.chips.widget.layout = self.chips_layout
         # interface
         self.sidebar = ipw.VBox([self.navigation_menu,
                                  self.seg.segment_widgets])
@@ -360,7 +333,6 @@ class SegmentsLabellingInterface(HasTraits):
         self.vits = Vits(dates, values, self.seg.breakpoints)
         # Apply layout
         self.vits.plot.layout = self.vits_layout
-        self.chips.widget.layout = self.chips_layout
         # Update elements of the interface (oroginally immutable)
         first_row = list(self.interface.children[0].children) # vits, webmap
         second_row = list(self.interface.children[1].children) # chips, sidebar
@@ -368,6 +340,9 @@ class SegmentsLabellingInterface(HasTraits):
         second_row[0] = self.chips.widget
         self.interface.children[0].children = tuple(first_row)
         self.interface.children[1].children = tuple(second_row)
+        sidebar = list(self.sidebar.children)
+        sidebar[1] = self.seg.segment_widgets
+        self.sidebar.children = tuple(sidebar)
         # Re-set callbacks (is that actually necessary)
         self.chips.observe(self._on_chip_hover, names=['highlight'])
         self.chips.observe(self._on_chip_click, names=['breakpoints'])

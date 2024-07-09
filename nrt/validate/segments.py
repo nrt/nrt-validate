@@ -107,7 +107,7 @@ class Segment(object):
             if change['type'] == 'change' and change['name'] == 'value':
                 self.label = change['new']
 
-        segment_info = ipw.Label(value=f"Segment from {self.begin} to {self.end}")
+        segment_info = ipw.Label(value=f"Segment from {self.begin.astype('datetime64[D]')} to {self.end.astype('datetime64[D]')}")
         dropdown = ipw.Dropdown(options=labels, description='Label:',
                                 value=self.label)
         dropdown.observe(on_change)
