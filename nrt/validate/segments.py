@@ -297,6 +297,19 @@ class Segmentation(HasTraits):
             print(f"Database error: {e}")
         [s.to_db(self.conn, feature_id) for s in self.segments]
 
+    @staticmethod
+    def get_fids_db(conn):
+        """Get a list of unique feature_ids present in the database
+        """
+        try:
+            cur = conn.cursor()
+            cur.execute('SELECT DISTINCT feature_id FROM segments')
+            return [row[0] for row in cur.fetchall()]
+        except sqlite3.OperationalError as e:
+            return []
+        except sqlite3.Error as e:
+            return []
+
     def add_breakpoint(self, date):
         """
         Add a breakpoint date to the segmentation.

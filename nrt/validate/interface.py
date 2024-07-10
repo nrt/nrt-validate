@@ -288,9 +288,24 @@ class SegmentsLabellingInterface(HasTraits):
         self.webmap_layout = ipw.Layout(width='30%')
         self.sidebar_layout = ipw.Layout(width='30%')
         self.vits_layout = ipw.Layout(width='70%')
+        self.sample_container_layout = ipw.Layout(height='300px',
+                                                  width='200px',
+                                                  overflow_y='auto',
+                                                  border='1px solid black',
+                                                  flex_flow='column',
+                                                  display='flex')
         # 
-        self.navigation_menu = ipw.Dropdown(options=range(len(loader)),
-                                            value=self.current_idx)
+        self.present_in_db, self.not_present_in_db = self.get_fids()
+        self.interpreted_list = self.create_interactive_list(self.present_in_db,
+                                                             'lightcoral')
+        self.not_interpreted_list = self.create_interactive_list(self.not_present_in_db,
+                                                                 'darkgreen')
+        self.interpreted_container = ipw.Box([self.interpreted_list],
+                                             layout=self.sample_container_layout)
+        self.not_interpreted_container = ipw.Box([self.not_interpreted_list],
+                                                 layout=self.sample_container_layout)
+        self.navigation_menu = ipw.HBox([self.not_interpreted_container,
+                                         self.interpreted_container])
         # Get data of first sample and build interface 
         fid, dates, images, values, geom, crs = self.loader[self.current_idx]
         self.seg = Segmentation.from_db_or_datelist(
@@ -387,4 +402,59 @@ class SegmentsLabellingInterface(HasTraits):
         # Remove the last layer (that's normally where the GeoJSON layer is; to be improved)
         self.webmap.layers = self.webmap.layers[:-1]
         self.draw_webmap(geom, res, crs)
+
+    def get_fids(self):
+        """Get two mutually exclusive lists of feature ids
+        First list is the not yet interpreted
+        Second list is the already interpreted
+        """
+        fids_loader = self.loader.fids
+        fids_db = Segmentation.get_fids_db(conn=self.conn)
+        # Split fids_loader depending on whether it is present in db or not
+        present_in_db = []
+        not_present_in_db = []
+        for idx, feature_id in fids_loader:
+            if feature_id in fids_db:
+                present_in_db.append((idx, feature_id))
+            else:
+                not_present_in_db.append((idx, feature_id))
+        return present_in_db, not_present_in_db
+
+    def create_interactive_list(self, samples, color):
+        """Create lists of samples buttons
+
+        Agrs:
+            samples (list): List of (idx, feature_id) tuples
+        """
+        buttons = []
+        for idx, feature_id in samples:
+            button = ipw.Button(description=f"Sample {feature_id}",
+                                layout=ipw.Layout(width='90%', flex='0 0 auto'))
+            button.style.button_color = color
+            button.idx = idx
+            button.on_click(self.on_sample_click)
+            buttons.append(button)
+        return ipw.VBox(buttons)
+
+    def on_sample_click(self, button):
+        self.current_idx = button.idx
+
+    def create_button(self, idx, feature_id, color):
+        button = ipw.Button(description=f"Feature {feature_id}",
+                            layout=ipw.Layout(width='90%', flex='0 0 auto'))
+        button.style.button_color = color
+        button.on_click(self.on_sample_click)
+        button.idx = idx  # Attach custom attribute
+        return button
+
+    def update_lists(self):
+        """Update lists of samples
+        """
+        self.present_in_db, self.not_present_in_db = self.get_fids()
+        self.interpreted_list.children = [self.create_button(idx, feature_id, 'lightgreen') for idx, feature_id in self.present_in_db]
+        self.not_interpreted_list.children = [self.create_button(idx, feature_id, 'lightcoral') for idx, feature_id in self.not_present_in_db]
+
+
+
+
 

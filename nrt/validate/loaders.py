@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 import datetime
 import threading
 from collections import OrderedDict
+import functools
 
 import xarray as xr
 import numpy as np
@@ -48,6 +49,11 @@ class BaseLoader(ABC):
             raise ValueError(f"Key '{key}' not found in one or more features' properties.")
         if len(unique_idx) != len(set(unique_idx)):
             raise ValueError(f"Provided key '{key}' contains non-unique values.")
+
+    @functools.cached_property
+    def fids(self):
+        """Return the list of unique feature ids"""
+        return [(idx, feat['properties'][self.key]) for idx,feat in enumerate(self.fc)]
 
     def __len__(self):
         return len(self.fc)
