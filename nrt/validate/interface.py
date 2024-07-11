@@ -55,7 +55,7 @@ class Chips(HasTraits):
             flex_flow='row wrap',
             align_items='stretch',
             width='70%',
-            height='800px',  # Set a fixed height (modify as needed)
+            height='600px',  # Set a fixed height (modify as needed)
             overflow='auto'  # Add scrollability
         )
         self.box_layout = box_layout
@@ -286,7 +286,7 @@ class SegmentsLabellingInterface(HasTraits):
         self.labels = labels
         # Layouts
         self.webmap_layout = ipw.Layout(width='30%')
-        self.sidebar_layout = ipw.Layout(width='30%')
+        self.sidebar_layout = ipw.Layout(width='30%', align_items='center')
         self.vits_layout = ipw.Layout(width='70%')
         self.sample_container_layout = ipw.Layout(height='300px',
                                                   width='200px',
@@ -304,12 +304,27 @@ class SegmentsLabellingInterface(HasTraits):
                                              layout=self.sample_container_layout)
         self.not_interpreted_container = ipw.Box([self.not_interpreted_list],
                                                  layout=self.sample_container_layout)
+        self.interpreted_container = ipw.VBox([
+            ipw.HTML('<h3 style="text-align: center;">Interpreted Samples</h3>'),
+            ipw.Box([self.interpreted_list],
+                    layout=self.sample_container_layout)
+        ])
+        self.not_interpreted_container = ipw.VBox([
+            ipw.HTML('<h3 style="text-align: center;">To Interpret</h3>'),
+            ipw.Box([self.not_interpreted_list],
+                    layout=self.sample_container_layout)
+        ])
         self.navigation_menu = ipw.HBox([self.not_interpreted_container,
                                          self.interpreted_container])
+        self.save_button = ipw.Button(description="Save",
+                                      layout=ipw.Layout(width='80%',
+                                                        margin='0 auto'),
+                                      style={'button_color': 'blue'})
+        self.save_button.on_click(self.save_to_db)
         # Get data of first sample and build interface 
-        fid, dates, images, values, geom, crs = self.loader[self.current_idx]
+        self.fid, dates, images, values, geom, crs = self.loader[self.current_idx]
         self.seg = Segmentation.from_db_or_datelist(
-            feature_id=fid,
+            feature_id=self.fid,
             conn=self.conn,
             dates=dates,
             labels=self.labels)
@@ -320,7 +335,8 @@ class SegmentsLabellingInterface(HasTraits):
         self.vits.plot.layout = self.vits_layout
         # interface
         self.sidebar = ipw.VBox([self.navigation_menu,
-                                 self.seg.segment_widgets])
+                                 self.seg.segment_widgets,
+                                 self.save_button])
         self.interface = ipw.VBox([
             ipw.HBox([self.vits.plot, self.webmap]),
             ipw.HBox([self.chips.widget, self.sidebar])
@@ -338,9 +354,9 @@ class SegmentsLabellingInterface(HasTraits):
         """Current idx just changed, new data need to be loaded and the displayed
         elements updated accordingly
         """
-        fid, dates, images, values, geom, crs = self.loader[change['new']]
+        self.fid, dates, images, values, geom, crs = self.loader[change['new']]
         self.seg = Segmentation.from_db_or_datelist(
-            feature_id=fid,
+            feature_id=self.fid,
             conn=self.conn,
             dates=dates,
             labels=self.labels)
@@ -434,25 +450,41 @@ class SegmentsLabellingInterface(HasTraits):
             button.idx = idx
             button.on_click(self.on_sample_click)
             buttons.append(button)
-        return ipw.VBox(buttons)
+        return ipw.VBox(buttons, layout=ipw.Layout(align_items='center'))
 
     def on_sample_click(self, button):
         self.current_idx = button.idx
+        self.update_lists()
 
     def create_button(self, idx, feature_id, color):
+        """Create a button related to a sample"""
+        outline_style = '2px solid white' if idx == self.current_idx else 'none'
         button = ipw.Button(description=f"Feature {feature_id}",
-                            layout=ipw.Layout(width='90%', flex='0 0 auto'))
+                            layout=ipw.Layout(width='90%',
+                                              flex='0 0 auto',
+                                              border=outline_style))
         button.style.button_color = color
         button.on_click(self.on_sample_click)
-        button.idx = idx  # Attach custom attribute
+        button.idx = idx
         return button
 
     def update_lists(self):
         """Update lists of samples
         """
         self.present_in_db, self.not_present_in_db = self.get_fids()
-        self.interpreted_list.children = [self.create_button(idx, feature_id, 'lightgreen') for idx, feature_id in self.present_in_db]
-        self.not_interpreted_list.children = [self.create_button(idx, feature_id, 'lightcoral') for idx, feature_id in self.not_present_in_db]
+        self.interpreted_list.children = [self.create_button(idx,
+                                                             feature_id,
+                                                             'lightcoral')
+                                          for idx, feature_id in self.present_in_db]
+        self.not_interpreted_list.children = [self.create_button(idx,
+                                                                 feature_id,
+                                                                 'darkgreen')
+                                              for idx, feature_id in self.not_present_in_db]
+
+    def save_to_db(self, button):
+        """Save current segmentation to database"""
+        self.seg.to_db(self.fid)
+        self.update_lists()
 
 
 

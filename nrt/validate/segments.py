@@ -249,13 +249,8 @@ class Segmentation(HasTraits):
             cur.execute('SELECT 1 FROM segments WHERE feature_id = ?', (feature_id,))
             result = cur.fetchone()
         except sqlite3.OperationalError as e:
-            if "no such table" in str(e):
-                print("Error: The table does not exist in the database")
-            else:
-                print(f"OperationalError: {e}")
             return False
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
             return False
         return result is not None
 
@@ -287,14 +282,11 @@ class Segmentation(HasTraits):
         try:
             cur = self.conn.cursor()
             cur.execute('DELETE FROM segments WHERE feature_id = ?', (feature_id,))
-            conn.commit()
+            self.conn.commit()
         except sqlite3.OperationalError as e:
-            if "no such table" in str(e):
-                print("Error: The table does not exist in the database")
-            else:
-                print(f"OperationalError: {e}")
+            pass
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            pass
         [s.to_db(self.conn, feature_id) for s in self.segments]
 
     @staticmethod
