@@ -1,3 +1,4 @@
+import os
 import copy, bisect
 import functools
 from typing import Dict, TYPE_CHECKING
@@ -55,7 +56,7 @@ class Chips(HasTraits):
             flex_flow='row wrap',
             align_items='stretch',
             width='70%',
-            height='600px',  # Set a fixed height (modify as needed)
+            height='100%',  # Set a fixed height (modify as needed)
             overflow='auto'  # Add scrollability
         )
         self.box_layout = box_layout
@@ -89,11 +90,11 @@ class Chips(HasTraits):
                 be extracted
             breakpoints (list): Optional list of dates
             compositor (callable): Callable to transform a temporal slice of the provided
-                Dataset into a 3D numpy array. See ``nrt.validate.composites`` module
+                Dataset into a 3D numpy array. See `nrt.validate.composites module
                 for examples
             window_size (float): Size of the bounding box used for cropping (created around
-                the centroid of ``geom``). In CRS unit.
-            **kwargs: Additional arguments passed to ``nrt.validate.utils.get_chips``
+                the centroid of `geom). In CRS unit.
+            **kwargs: Additional arguments passed to `nrt.validate.utils.get_chips
         """
         chips = utils.get_chips(ds=ds, geom=geom, size=window_size,
                                 compositor=compositor, **kwargs)
@@ -172,7 +173,7 @@ class Vits(HasTraits):
                 spatial average for Polygons)
             breakpoints (list): Optional list of dates
             vis (dict): Dictionary of callables to compute vegetation indices
-                see ``nrt.validate.indices`` module for examples and already implemented
+                see `nrt.validate.indices module for examples and already implemented
                 indices
         """
         values = {k:utils.get_ts(ds=ds,
@@ -193,7 +194,7 @@ class Vits(HasTraits):
     def _create_plot(self):
         # Create axes
         x_ax = Axis(label='Dates (Year-month)', scale=self.x_sc,
-                    tick_format='%m-%Y', tick_rotate=0)
+                    tick_format='%Y-%m', tick_rotate=0)
         y_ax = Axis(label='Vegetation Index', scale=self.y_sc,
                     orientation='vertical', side='left')
         # Create and display the figure
@@ -203,9 +204,8 @@ class Vits(HasTraits):
                                     *self.fitted_lines],
                        axes=[x_ax, y_ax],
                        title='Sample temporal profile',
-                       layout=ipw.Layout(width='100%',
-                                         height='400px'),
-                       animation_duration=500)
+                       animation_duration=500,
+                       fig_margin={'top': 50, 'bottom': 50, 'left': 50, 'right': 50})
 
         # Add a dropdown widget to select VI
         dropdown_vi = ipw.Dropdown(options=self.values.keys(),
@@ -226,8 +226,10 @@ class Vits(HasTraits):
 
         dropdown_vi.observe(update_scatter, names='value')
         dropdown_order.observe(update_order, names='value')
-        return ipw.VBox([ipw.HBox([dropdown_vi, dropdown_order]),
-                         self.figure])
+        return ipw.VBox([ipw.HBox([dropdown_vi, dropdown_order],
+                                 layout=ipw.Layout(overflow='visible')),
+                         self.figure],
+                        layout=ipw.Layout(height='100%', width='70%'))
 
     def update_highlighted_point(self, idx):
         """Update the coordinates of the highlighted point based on idx.
@@ -285,41 +287,46 @@ class SegmentsLabellingInterface(HasTraits):
         self.res = res
         self.labels = labels
         # Layouts
-        self.webmap_layout = ipw.Layout(width='30%')
-        self.sidebar_layout = ipw.Layout(width='30%', align_items='center')
-        self.vits_layout = ipw.Layout(width='70%')
-        self.sample_container_layout = ipw.Layout(height='300px',
-                                                  width='200px',
-                                                  overflow_y='auto',
-                                                  border='1px solid black',
-                                                  flex_flow='column',
-                                                  display='flex')
+        self.webmap_layout = ipw.Layout(width='30%', height='100%')
+        self.sidebar_layout = ipw.Layout(width='100%',
+                                         height='90%',
+                                         overflow='auto',
+                                         align_items='center')
+        self.sample_container_layout = ipw.Layout(width='200px',
+                                                  overflow_y='scroll',
+                                                  border='1px solid black')
         # 
         self.present_in_db, self.not_present_in_db = self.get_fids()
         self.interpreted_list = self.create_interactive_list(self.present_in_db,
                                                              'lightcoral')
         self.not_interpreted_list = self.create_interactive_list(self.not_present_in_db,
                                                                  'darkgreen')
-        self.interpreted_container = ipw.Box([self.interpreted_list],
-                                             layout=self.sample_container_layout)
-        self.not_interpreted_container = ipw.Box([self.not_interpreted_list],
-                                                 layout=self.sample_container_layout)
         self.interpreted_container = ipw.VBox([
             ipw.HTML('<h3 style="text-align: center;">Interpreted Samples</h3>'),
-            ipw.Box([self.interpreted_list],
+            ipw.VBox([self.interpreted_list],
                     layout=self.sample_container_layout)
         ])
         self.not_interpreted_container = ipw.VBox([
             ipw.HTML('<h3 style="text-align: center;">To Interpret</h3>'),
-            ipw.Box([self.not_interpreted_list],
+            ipw.VBox([self.not_interpreted_list],
                     layout=self.sample_container_layout)
         ])
         self.navigation_menu = ipw.HBox([self.not_interpreted_container,
-                                         self.interpreted_container])
+                                         self.interpreted_container],
+                                        layout=ipw.Layout(justify_content='center',
+                                                          min_height='250px',
+                                                          height='300px'))
         self.save_button = ipw.Button(description="Save",
                                       layout=ipw.Layout(width='80%',
-                                                        margin='0 auto'),
+                                                        min_height='30px'),
                                       style={'button_color': 'blue'})
+        self.logo = ipw.Image(value=open(os.path.join(os.path.dirname(__file__), 'static', 'ec-logo.png'), 'rb').read(),
+                              format='png',
+                              layout=ipw.Layout(
+                                  width='90%',
+                                  height='50px',
+                                  object_fit='contain'
+                              ))
         self.save_button.on_click(self.save_to_db)
         # Get data of first sample and build interface 
         self.fid, dates, images, values, geom, crs = self.loader[self.current_idx]
@@ -331,16 +338,23 @@ class SegmentsLabellingInterface(HasTraits):
         self.chips = Chips(dates, images, self.seg.breakpoints)
         self.vits = Vits(dates, values, self.seg.breakpoints)
         self.draw_webmap(geom=geom, res=self.res, crs=crs)
-        # Apply layout
-        self.vits.plot.layout = self.vits_layout
         # interface
         self.sidebar = ipw.VBox([self.navigation_menu,
                                  self.seg.segment_widgets,
-                                 self.save_button])
+                                 self.save_button],
+                                layout=self.sidebar_layout)
+        self.sidebar_with_logo = ipw.VBox(
+                                    [self.sidebar, self.logo],
+                                    layout=ipw.Layout(height='calc(96vh - 400px)',
+                                                      width='30%',
+                                                      align_items='center')
+                                )
         self.interface = ipw.VBox([
-            ipw.HBox([self.vits.plot, self.webmap]),
-            ipw.HBox([self.chips.widget, self.sidebar])
-        ])
+            ipw.HBox([self.vits.plot, self.webmap],
+                     layout=ipw.Layout(height='400px', overflow='visible')),
+            ipw.HBox([self.chips.widget, self.sidebar_with_logo],
+                     layout=ipw.Layout(height='calc(96vh - 400px)', overflow='hidden'))
+        ], layout=ipw.Layout(height='96vh', overflow='hidden'))
         # Connections between elements
         self.chips.observe(self._on_chip_hover, names=['highlight'])
         self.chips.observe(self._on_chip_click, names=['breakpoints'])
@@ -362,8 +376,6 @@ class SegmentsLabellingInterface(HasTraits):
             labels=self.labels)
         self.chips = Chips(dates, images, self.seg.breakpoints)
         self.vits = Vits(dates, values, self.seg.breakpoints)
-        # Apply layout
-        self.vits.plot.layout = self.vits_layout
         # Update elements of the interface (oroginally immutable)
         first_row = list(self.interface.children[0].children) # vits, webmap
         second_row = list(self.interface.children[1].children) # chips, sidebar
@@ -459,7 +471,7 @@ class SegmentsLabellingInterface(HasTraits):
     def create_button(self, idx, feature_id, color):
         """Create a button related to a sample"""
         outline_style = '2px solid white' if idx == self.current_idx else 'none'
-        button = ipw.Button(description=f"Feature {feature_id}",
+        button = ipw.Button(description=f"Sample {feature_id}",
                             layout=ipw.Layout(width='90%',
                                               flex='0 0 auto',
                                               border=outline_style))
@@ -485,8 +497,3 @@ class SegmentsLabellingInterface(HasTraits):
         """Save current segmentation to database"""
         self.seg.to_db(self.fid)
         self.update_lists()
-
-
-
-
-

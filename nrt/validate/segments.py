@@ -112,7 +112,8 @@ class Segment(object):
                                 value=self.label)
         dropdown.observe(on_change)
         # Use VBox to vertically stack the label and dropdown
-        widget_box = ipw.VBox([segment_info, dropdown])
+        widget_box = ipw.VBox([segment_info, dropdown],
+                              layout=ipw.Layout(min_height='60px'))
         return widget_box
 
 
@@ -174,7 +175,10 @@ class Segmentation(HasTraits):
             self.segments = segments if segments else []
             self.conn = conn
             self.labels = labels
-            self.segment_widgets = ipw.VBox([])
+            self.segment_widgets = ipw.VBox([],
+                                            layout=ipw.Layout(overflow='visible',
+                                                              flex='1 1 auto',
+                                                              height='auto'))
             self._update_segment_widgets()
 
     @classmethod

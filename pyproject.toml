@@ -35,3 +35,6 @@ docs = ["sphinx", "sphinx_rtd_theme", "matplotlib", "sphinx-gallery"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["nrt.validate"]
+
+[tool.setuptools.package-data]
+"nrt.validate" = ["static/*"]

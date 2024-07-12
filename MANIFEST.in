@@ -1,4 +1,5 @@
 include LICENSE README.rst setup.py
+include nrt/validate/static/*
 recursive-include docs *.rst
 recursive-include docs *.png
 exclude MANIFEST.in
