@@ -10,7 +10,7 @@ import sqlite3
 from typing import List
 
 import numpy as np
-from traitlets import HasTraits, observe, List as TraitletsList
+from traitlets import HasTraits, observe, Bunch, List as TraitletsList
 import ipywidgets as ipw
 
 
@@ -170,16 +170,17 @@ class Segmentation(HasTraits):
                          'Forest recovery',
                          'Non-forest']):
         super(Segmentation, self).__init__()
-        with self.hold_trait_notifications():
-            self.breakpoints = breakpoints if breakpoints else []
-            self.segments = segments if segments else []
-            self.conn = conn
-            self.labels = labels
-            self.segment_widgets = ipw.VBox([],
-                                            layout=ipw.Layout(overflow='visible',
-                                                              flex='1 1 auto',
-                                                              height='auto'))
-            self._update_segment_widgets()
+        self.disable_notifications()
+        self.breakpoints = breakpoints if breakpoints else []
+        self.segments = segments if segments else []
+        self.conn = conn
+        self.labels = labels
+        self.segment_widgets = ipw.VBox([],
+                                        layout=ipw.Layout(overflow='visible',
+                                                          flex='1 1 auto',
+                                                          height='auto'))
+        self._update_segment_widgets()
+        self.enable_notifications()
 
     @classmethod
     def from_datelist(cls, dates, conn, labels):
@@ -384,6 +385,17 @@ class Segmentation(HasTraits):
     def __str__(self):
         message = 'Temporal segmentation with {n} breakpoints and {nn} segments'.format(n=len(self.breakpoints), nn=len(self.segments))
         return message
+
+    def disable_notifications(self):
+        """Disable trait notifications."""
+        def ignore(change: Bunch) -> None:
+            pass
+        self._original_notify_change = self.notify_change
+        self.notify_change = ignore
+
+    def enable_notifications(self):
+        """Enable trait notifications."""
+        self.notify_change = self._original_notify_change
 
 
 if __name__ == "__main__":
