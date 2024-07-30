@@ -15,14 +15,33 @@ authors = [
 keywords = ["sentinel2", "xarray", "validation", "forest", "monitoring", "change"]
 license = {file = "LICENSE"}
 classifiers = [
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
 ]
 requires-python = ">= 3.9"
-dependencies = ["xarray", "ipywidgets", "ipyleaflet", "bqplot",
-                "ipyevents", "Pillow", "rioxarray", "netCDF4",
-                "pandas", "rtree", "shapely", "traitlets"]
+dependencies = [
+    "numpy",
+    "xarray",
+    "pandas",
+    "IPython",
+    "ipywidgets",
+    "ipyevents",
+    "ipyleaflet",
+    "bqplot",
+    "traitlets",
+    "rasterio",
+    "rioxarray",
+    "pyproj",
+    "affine",
+    "shapely",
+    "rtree",
+    "Pillow",
+    "netCDF4",
+    "kneed",
+    "requests"
+]
 
 [project.urls]
 homepage = "https://code.europa.eu/jrc-forest/nrt-validate"
