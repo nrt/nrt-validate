@@ -38,7 +38,7 @@ class BaseComposite(ABC):
 
 
 class SimpleComposite(BaseComposite):
-    def __init__(self, b='B02_20', g='B03_20', r='B04_20',
+    def __init__(self, b='B02', g='B03', r='B04',
                  blim=[20, 2000], glim=[50, 2000], rlim=[20, 2000]):
         """Initialize the SimpleComposite with specific bands and limits.
 
@@ -73,8 +73,32 @@ class SimpleComposite(BaseComposite):
         return rgb_stretched
 
 
-class TasseledCapComposite(BaseComposite):
-    def __init__(self, blue='B02_20', green='B03_20', red='B04_20',
+class S2CIR(SimpleComposite):
+    def __init__(self, b='B03', g='B04', r='B08',
+                 blim=[250, 1300], glim=[150, 1700], rlim=[1500, 4000]):
+        """Initialize the S2CIR composite with specific bands for CIR (Color Infrared).
+
+        Convenience class to quickly instantiate a Sentinel 2 Color Infrared
+        compositor with sensible defaults (for L2A surface reflectance values x
+        10000)
+        """
+        super().__init__(b=b, g=g, r=r, blim=blim, glim=glim, rlim=rlim)
+
+
+class S2SWIR(SimpleComposite):
+    def __init__(self, b='B04', g='B8A', r='B11',
+                 blim=[150, 1200], glim=[1800, 3500], rlim=[800, 3000]):
+        """Initialize the S2SWIR composite with specific bands for SWIR.
+
+        Convenience class to quickly instantiate a Sentinel 2 SWIR color
+        compositor with sensible defaults (for L2A surface reflectance values x
+        10000)
+        """
+        super().__init__(b=b, g=g, r=r, blim=blim, glim=glim, rlim=rlim)
+
+
+class S2TasseledCapComposite(BaseComposite):
+    def __init__(self, blue='B02', green='B03', red='B04',
                  nir='B8A', swir1='B11', swir2='B12',
                  rlim=[1500,10000], glim=[200,6000], blim=[0,1200]):
         """Compute greenness, brightness and wetness from S2 L2A data and
