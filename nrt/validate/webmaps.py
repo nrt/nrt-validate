@@ -1,10 +1,11 @@
 import datetime
 import xml.etree.ElementTree as ET
 import re
+
 import ipywidgets as ipw
 from ipyleaflet import Map, TileLayer, WidgetControl, basemaps
-
 import requests
+
 
 class GoogleBasemap:
     """

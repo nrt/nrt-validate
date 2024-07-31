@@ -10,9 +10,9 @@ import numpy as np
 @dataclass
 class BaseS2Transform(ABC):
     """Abstract base class for Sentinel2 based indices"""
-    blue: str = 'B02_20'
-    green: str = 'B03_20'
-    red: str = 'B04_20'
+    blue: str = 'B02'
+    green: str = 'B03'
+    red: str = 'B04'
     nir: str = 'B8A'
     re1: str = 'B05'
     re2: str = 'B06'

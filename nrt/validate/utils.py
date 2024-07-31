@@ -31,7 +31,7 @@ def np2ipw(arr, geom=None, transform=None, res=20, scale=4,
             outlined).
         scale (int): Scaling factor to increase image size
         outline_color (str): Color of the (expanded) geometry outline. See the
-        `Matplotlib Named Colors Gallery <https://matplotlib.org/stable/gallery/color/named_colors.html#css-colors>`_
+            `Matplotlib Named Colors Gallery <https://matplotlib.org/stable/gallery/color/named_colors.html#css-colors>`_
 
     Returns:
         ipywidgets.Image: The image with geometry overlay, in ipywidgets Image format
@@ -80,7 +80,7 @@ def get_chips(ds, geom, size, compositor=SimpleComposite(), res=None, scale=4,
             point, the Dataset resolution is used.
         scale (int): Scaling factor to increase image size
         outline_color (str): Color of the (expanded) geometry outline. See the
-        `Matplotlib Named Colors Gallery <https://matplotlib.org/stable/gallery/color/named_colors.html#css-colors>`_
+            `Matplotlib Named Colors Gallery <https://matplotlib.org/stable/gallery/color/named_colors.html#css-colors>`_
 
     Examples:
         >>> import xarray as xr
@@ -142,7 +142,7 @@ def get_ts(ds, geom, vi_calculator=NDVI()):
         ds (xarray.Dataset): The dataset from which to compute and extract the
             time-series
         geom (dict): A geojson geometry (Point or Polygon). If point, the nearest
-            pixel is extracted; if Polygon, spatial average excluding ``nan``s is
+            pixel is extracted; if Polygon, spatial average excluding ``nan`` s is
             computed for each time-step.
         vi_calculator (callable): A callable to process a DataArray containing the
             desired index from the dataset. See the ``nrt.validate.indices`` module for

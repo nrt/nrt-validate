@@ -7,9 +7,9 @@ import numpy as np
 @dataclass
 class BaseS2Index(ABC):
     """Abstract base class for Sentinel2 based indices"""
-    blue: str = 'B02_20'
-    green: str = 'B03_20'
-    red: str = 'B04_20'
+    blue: str = 'B02'
+    green: str = 'B03'
+    red: str = 'B04'
     nir: str = 'B8A'
     re1: str = 'B05'
     re2: str = 'B06'
@@ -26,9 +26,9 @@ class BaseS2Index(ABC):
 class NDVI(BaseS2Index):
     """NDVI calculator for Sentinel 2 data organized in an xarray Dataset
 
-    By default, the red channel must be named ``'B03_20'`` and the nir channel
+    By default, the red channel must be named ``'B03'`` and the nir channel
     ``'B8A'`` as per the ``BaseS2Index`` base class. These defaults can be modified
-    at instantiation by passing for instance ``ndvi = NDVI(red='B083', nir='B08')``
+    at instantiation by passing for instance ``ndvi = NDVI(red='B03_20', nir='B08_20')``
     """
     def __call__(self, ds):
         ds = ds.astype(np.float32)
