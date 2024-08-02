@@ -1,5 +1,6 @@
 include LICENSE README.rst setup.py
 include nrt/validate/static/*
+include nrt/validate/demo_notebook.ipynb
 recursive-include docs *.rst
 recursive-include docs *.png
 exclude MANIFEST.in

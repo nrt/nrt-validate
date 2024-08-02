@@ -56,4 +56,5 @@ where = ["."]
 include = ["nrt.validate"]
 
 [tool.setuptools.package-data]
-"nrt.validate" = ["static/*"]
+"nrt.validate" = ["static/*",
+                  "notebooks/*"]
