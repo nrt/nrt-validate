@@ -13,6 +13,7 @@ Welcome to nrt-validate's documentation!
    :caption: Contents:
 
    quickstart
+   interface
    api_reference
 
 
