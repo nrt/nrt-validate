@@ -12,6 +12,7 @@ Welcome to nrt-validate's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   quickstart
    api_reference
 
 
