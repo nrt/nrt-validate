@@ -40,11 +40,15 @@ dependencies = [
     "Pillow",
     "netCDF4",
     "kneed",
-    "requests"
+    "requests",
+    "click"
 ]
 
 [project.urls]
 homepage = "https://code.europa.eu/jrc-forest/nrt-validate"
+
+[project.scripts]
+nrtval = "nrt.validate.nrtval:cli"
 
 [project.optional-dependencies]
 dask = ["dask"]

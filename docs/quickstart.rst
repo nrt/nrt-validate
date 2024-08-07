@@ -30,29 +30,16 @@ Install the package from PyPI using:
 
    pip install nrt-validate
 
-When planning to use the user interface, it is necessary to also install ``voila`` (for serving the interface as a local dashboard) and ``fiona`` (often needed to load features contained in a vector file as an in-memory feature collection).
-
-.. code-block::
-
-   pip install voila fiona
 
 Demo
 ====
 
 For a quick demo of the interface that does not require any data preparation, you can run:
 
-On Unix/Linux:
-
 .. code-block::
 
-   python -c "from nrt.validate import DemoNotebook; print(DemoNotebook.path())" | xargs -I {} voila {} --theme=dark
+   nrtval demo
 
-On Windows (PowerShell):
-
-.. code-block::
-
-   $notebook_path = python -c "from nrt.validate import DemoNotebook; print(DemoNotebook.path())"
-   voila $notebook_path --theme=dark
 
 References
 ==========
