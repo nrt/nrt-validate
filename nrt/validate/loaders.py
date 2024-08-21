@@ -130,6 +130,11 @@ class STACLoader(BaseLoader):
         res (float, optional): Spatial resolution for the output data.
         prefetch (int, optional): Number of items to prefetch and cache.
         cache_size (int, optional): Maximum size of the cache.
+        xr_transform (callable): Callable that takes an xarray Dataset as input
+            and returns another xarray Dataset. This operation is applied to the
+            spatial subset of the cube used for generating chips and VI time-series.
+            Generally used for pre-processing steps such as removal of "empty"
+            slices, or data scaling.
         kwargs (dict, optional): Additional arguments passed to ``nrt.validate.utils.get_chips``.
 
     Returns:
@@ -202,8 +207,9 @@ class STACLoader(BaseLoader):
                  window_size: float,
                  compositor: Callable[[xr.Dataset], np.ndarray],
                  query: Optional[Dict],
+                 xr_transform: Optional[Callable[[xr.Dataset], xr.Dataset]] = None,
                  res: Optional[float] = None,
-                 prefetch: Optional[int] = None,
+                 prefetch: Optional[int] = 5,
                  cache_size: Optional[int] = 20,
                  **kwargs):
         super().__init__(fc, key, crs, prefetch, cache_size)
@@ -216,6 +222,7 @@ class STACLoader(BaseLoader):
         self.window_size = window_size
         self.compositor = compositor
         self.query = query
+        self.xr_transform = xr_transform
         self.res = res
         self.kwargs = kwargs
 
@@ -250,6 +257,8 @@ class STACLoader(BaseLoader):
             resampling=self.resampling,
             fail_on_error=False
         ).compute()
+        if self.xr_transform:
+            ds = self.xr_transform(ds)
         # 'Reduce' time precision for compatibility with segments module 
         ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
 
@@ -292,6 +301,11 @@ class FileLoader(BaseLoader):
             for examples
         window_size (float): Size of the bounding box used for cropping (created around
             the centroid of ``geom``). In CRS unit.
+        xr_transform (callable): Callable that takes an xarray Dataset as input
+            and returns another xarray Dataset. This operation is applied to the
+            spatial subset of the cube used for generating chips and VI time-series.
+            Generally used for pre-processing steps such as removal of "empty"
+            slices, or data scaling.
         **kwargs: Additional arguments passed to ``nrt.validate.utils.get_chips``
 
     Returns:
@@ -344,8 +358,9 @@ class FileLoader(BaseLoader):
                  vis: Dict[str, Callable[[xr.DataArray], Any]],
                  window_size: float,
                  compositor: Callable[[xr.Dataset], np.ndarray],
+                 xr_transform: Optional[Callable[[xr.Dataset], xr.Dataset]] = None,
                  res: Optional[float] = None,
-                 prefetch: Optional[int] = None,
+                 prefetch: Optional[int] = 5,
                  cache_size: Optional[int] = 20,
                  **kwargs):
         super().__init__(fc, key, crs, prefetch, cache_size)
@@ -353,6 +368,7 @@ class FileLoader(BaseLoader):
         self.vis = vis
         self.window_size = window_size
         self.compositor = compositor
+        self.xr_transform = xr_transform
         self.res = res
         self.kwargs = kwargs
 
@@ -387,8 +403,12 @@ class FileLoader(BaseLoader):
 
     def _load_data(self, idx):
         ds = self._find_intersects(idx)
-        ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
         feature = self.fc[idx]
+        bbox = shape(feature['geometry']).centroid.buffer(self.window_size / 2).bounds
+        ds = ds.rio.clip_box(*bbox).compute()
+        if self.xr_transform:
+            ds = self.xr_transform(ds)
+        ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
         unique_idx = feature['properties'][self.key]
         dates = ds.time.values
         values = {k: utils.get_ts(ds=ds, geom=feature['geometry'], vi_calculator=v)[1]
