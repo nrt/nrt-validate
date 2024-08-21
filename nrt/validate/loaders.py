@@ -9,11 +9,10 @@ have at least a __len__ method. Data returned by subscript are in the form of a
 
 TODOs/questions:
     - Should WKT geometries be stored in the database? To facilitate disaster recovery
-    - CRS handling, none for now. Needed? Yes, it may be needed for webmap overlay. 
+    - CRS handling, none for now. Needed? Yes, it may be needed for webmap overlay.
     - The dates array must be numpy.datetime64 with Day precision. Document that
       somewhere for people who wish to write their own loader
 """
-from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union, Callable, TYPE_CHECKING
 from abc import ABC, abstractmethod
 import datetime
@@ -33,14 +32,22 @@ if TYPE_CHECKING:
     from pystac_client import Client
 
 
-@dataclass
 class BaseLoader(ABC):
-    fc: List[Dict[str, Any]]
-    key: str
-    crs: Any
+    def __init__(self,
+                 fc: List[Dict[str, Any]],
+                 key: str,
+                 crs: Any,
+                 prefetch: Optional[int] = None,
+                 cache_size: Optional[int] = 20):
+        self.fc = fc
+        self.key = key
+        self.crs = crs
+        self.prefetch = prefetch
+        self.cache_size = cache_size
+        self.cache = OrderedDict()
+        self.lock = threading.Lock()
 
-    def __post_init__(self):
-        self._validate_unique_key(self.fc, self.key)
+        self._validate_unique_key(fc, key)
 
     def _validate_unique_key(self, fc: List[Dict[str, Any]], key: str):
         try:
@@ -53,28 +60,50 @@ class BaseLoader(ABC):
     @functools.cached_property
     def fids(self):
         """Return the list of unique feature ids"""
-        return [(idx, feat['properties'][self.key]) for idx,feat in enumerate(self.fc)]
+        return [(idx, feat['properties'][self.key]) for idx, feat in enumerate(self.fc)]
 
     def __len__(self):
         return len(self.fc)
 
+    @abstractmethod
+    def _load_data(self, idx):
+        """Abstract method to be implemented in child classes to load data for a given id."""
+        pass
+
+    def _prefetch(self, start_idx):
+        def prefetch_task(start_idx):
+            for i in range(start_idx, min(start_idx + self.prefetch, len(self.fc))):
+                if i not in self.cache:
+                    data = self._load_data(i)
+                    with self.lock:
+                        self.cache[i] = data
+                        # Trim cache if it exceeds the cache_size
+                        while len(self.cache) > self.cache_size:
+                            self.cache.popitem(last=False)
+
+        thread = threading.Thread(target=prefetch_task, args=(start_idx,))
+        thread.daemon = True
+        thread.start()
+
+    def __getitem__(self, idx):
+        if self.prefetch is not None:
+            self._prefetch(idx + 1)
+
+        with self.lock:
+            if idx in self.cache:
+                return self.cache[idx]
+
+        data = self._load_data(idx)
+        with self.lock:
+            self.cache[idx] = data
+            # Trim cache if it exceeds the cache_size
+            while len(self.cache) > self.cache_size:
+                self.cache.popitem(last=False)
+
+        return data
 
 
-@dataclass
 class STACLoader(BaseLoader):
-    client: 'Client'
-    collection_id: str
-    bands: List[str]
-    datetime: List[Union[datetime.datetime, str]]
-    resampling: Optional[Union[str, Dict[str, str]]]
-    vis: Dict[str, Callable[[xr.DataArray], Any]]
-    window_size: float
-    compositor: Callable[[xr.Dataset], np.ndarray]
-    query: Optional[Dict]
-    res: Optional[float] = field(default=None)
-    prefetch: Optional[int] = field(default=None)
-    cache_size: Optional[int] = field(default=20)
-    kwargs: dict = field(default_factory=dict)
     """Loader to prepare data indexed into a STAC Catalogue
 
     Args:
@@ -138,7 +167,7 @@ class STACLoader(BaseLoader):
         >>> resampling = {band: 'nearest' if band == 'SCL' else 'cubic' for band in bands}
         >>> dt = [datetime.datetime(2019, 1, 1), datetime.datetime(2021,12,31)]
         >>> vis = {'NDVI': utils.combine_transforms(S2CloudMasking(), CR_SWIR(nir='B08')),
-        >>>        'CR-SWIR': utils.combine_transforms(S2CloudMasking(), NDVI(red='B04', nir='B08'))}
+        ...        'CR-SWIR': utils.combine_transforms(S2CloudMasking(), NDVI(red='B04', nir='B08'))}
         >>> window_size = 300
         >>> compositor = SimpleComposite(r='B04', g='B03', b='B02')
         >>> query = {"eo:cloud_cover": {"lt": 10}}
@@ -160,15 +189,41 @@ class STACLoader(BaseLoader):
         ...                     prefetch=prefetch)
         >>> print(loader[0])
     """
-    def __post_init__(self):
-        super().__post_init__()
+    def __init__(self,
+                 fc: List[Dict[str, Any]],
+                 key: str,
+                 crs: Any,
+                 client: 'Client',
+                 collection_id: str,
+                 bands: List[str],
+                 datetime: List[Union[datetime.datetime, str]],
+                 resampling: Optional[Union[str, Dict[str, str]]],
+                 vis: Dict[str, Callable[[xr.DataArray], Any]],
+                 window_size: float,
+                 compositor: Callable[[xr.Dataset], np.ndarray],
+                 query: Optional[Dict],
+                 res: Optional[float] = None,
+                 prefetch: Optional[int] = None,
+                 cache_size: Optional[int] = 20,
+                 **kwargs):
+        super().__init__(fc, key, crs, prefetch, cache_size)
+        self.client = client
+        self.collection_id = collection_id
+        self.bands = bands
+        self.datetime = datetime
+        self.resampling = resampling
+        self.vis = vis
+        self.window_size = window_size
+        self.compositor = compositor
+        self.query = query
+        self.res = res
+        self.kwargs = kwargs
+
         try:
             from odc.stac import stac_load
             from odc.geo.geobox import GeoBox
         except ImportError:
             raise ImportError("You must install both odc-stac and odc-geo to use STACLoader.")
-        self.cache = OrderedDict()
-        self.lock = threading.Lock()
 
     def _load_data(self, idx):
         from odc.stac import stac_load
@@ -214,46 +269,8 @@ class STACLoader(BaseLoader):
 
         return unique_idx, dates, chips, values, feature['geometry'], self.crs
 
-    def _prefetch(self, start_idx):
-        def prefetch_task(start_idx):
-            for i in range(start_idx, min(start_idx + self.prefetch, len(self.fc))):
-                if i not in self.cache:
-                    data = self._load_data(i)
-                    with self.lock:
-                        self.cache[i] = data
-                        # Trim cache if it exceeds the cache_size
-                        while len(self.cache) > self.cache_size:
-                            self.cache.popitem(last=False)
 
-        thread = threading.Thread(target=prefetch_task, args=(start_idx,))
-        thread.daemon = True
-        thread.start()
-
-    def __getitem__(self, idx):
-        if self.prefetch is not None:
-            self._prefetch(idx + 1)
-
-        with self.lock:
-            if idx in self.cache:
-                return self.cache[idx]
-
-        data = self._load_data(idx)
-        with self.lock:
-            self.cache[idx] = data
-            # Trim cache if it exceeds the cache_size
-            while len(self.cache) > self.cache_size:
-                self.cache.popitem(last=False)
-
-        return data
-
-@dataclass
 class FileLoader(BaseLoader):
-    datasets: Union[xr.Dataset, List[xr.Dataset]]
-    vis: Dict[str, Callable[[xr.DataArray], Any]]
-    window_size: float
-    compositor: Callable[[xr.Dataset], np.ndarray]
-    res: Optional[float] = field(default=None)
-    kwargs: dict = field(default_factory=dict)
     """A loader to prepare locally accessible data
 
     Args:
@@ -299,6 +316,8 @@ class FileLoader(BaseLoader):
         >>> from nrt.validate.xr_transforms import *
 
         >>> cube = xr.open_dataset('/home/loic/Downloads/czechia_nrt_test.nc', chunks=-1)
+        >>> cube = cube.rename({'B02_20':'B02', 'B03_20': 'B03', 'B04_20': 'B04'})
+
         >>> geom = {'type': 'Point', 'coordinates': [4813210, 2935950]}
         >>> fc = [{'geometry': mapping(Point(4813210, 2935950)),
         ...        'properties': {'pid': 1}},
@@ -317,15 +336,32 @@ class FileLoader(BaseLoader):
         >>> print(len(loader[0]))
         6
     """
+    def __init__(self,
+                 fc: List[Dict[str, Any]],
+                 key: str,
+                 crs: Any,
+                 datasets: Union[xr.Dataset, List[xr.Dataset]],
+                 vis: Dict[str, Callable[[xr.DataArray], Any]],
+                 window_size: float,
+                 compositor: Callable[[xr.Dataset], np.ndarray],
+                 res: Optional[float] = None,
+                 prefetch: Optional[int] = None,
+                 cache_size: Optional[int] = 20,
+                 **kwargs):
+        super().__init__(fc, key, crs, prefetch, cache_size)
+        self.datasets = self._validate_datasets(datasets)
+        self.vis = vis
+        self.window_size = window_size
+        self.compositor = compositor
+        self.res = res
+        self.kwargs = kwargs
 
-    def __post_init__(self):
-        super().__post_init__()
-        self.datasets = self._validate_datasets(self.datasets)
         self.rtree = Index()
         for i, ds in enumerate(self.datasets):
             self.rtree.insert(i, ds.rio.bounds())
 
-    def _validate_datasets(self, datasets: Union[xr.Dataset, List[xr.Dataset]]) -> List[xr.Dataset]:
+    def _validate_datasets(self,
+                           datasets: Union[xr.Dataset, List[xr.Dataset]]) -> List[xr.Dataset]:
         """Validate the datasets input and normalize it to a list of xarray.Dataset objects."""
         if isinstance(datasets, xr.Dataset):
             return [datasets]
@@ -334,42 +370,35 @@ class FileLoader(BaseLoader):
                 return datasets
             else:
                 raise ValueError("All elements in the list must be xarray.Dataset objects")
+        raise ValueError("Datasets must be either an xarray.Dataset or a list of xarray.Dataset objects")
 
     def _find_intersects(self, idx: int) -> xr.Dataset:
         geom = self.fc[idx]['geometry']
         shape_ = shape(geom)
         intersects_maybe = list(self.rtree.intersection(shape_.bounds))
-        # Confirm intersections
-        intersects_confirmed = [idx for idx in intersects_maybe if
-                                box(*self.datasets[idx].rio.bounds()).intersects(shape_)]
+        intersects_confirmed = [i for i in intersects_maybe if box(*self.datasets[i].rio.bounds()).intersects(shape_)]
         if not intersects_confirmed:
-            raise ValueError('Geometry of %d \'s Feature does not intersects with any of the provided datasets' % idx)
+            raise ValueError(f'Geometry of feature {idx} does not intersect with any provided datasets')
         if len(intersects_confirmed) > 1:
-            # Look for nearest from center
-            distance = [shape_.centroid.distance(box(*self.datasets[idx].rio.bounds()).centroid)
-                        for idx in intersects_confirmed]
+            distance = [shape_.centroid.distance(box(*self.datasets[i].rio.bounds()).centroid)
+                        for i in intersects_confirmed]
             intersects_confirmed = [intersects_confirmed[distance.index(min(distance))]]
         return self.datasets[intersects_confirmed[0]]
 
-    def __getitem__(self, idx):
+    def _load_data(self, idx):
         ds = self._find_intersects(idx)
-        # 'Reduce' time precision for compatibility with segments module
         ds = ds.assign_coords(time=ds.time.values.astype('datetime64[D]'))
         feature = self.fc[idx]
         unique_idx = feature['properties'][self.key]
         dates = ds.time.values
-        values = {k:utils.get_ts(ds=ds,
-                                 geom=feature['geometry'],
-                                 vi_calculator=v)[1] for k,v in self.vis.items()}
-        chips = utils.get_chips(ds=ds,
-                                geom=feature['geometry'],
-                                size=self.window_size,
-                                compositor=self.compositor,
-                                res=self.res,
-                                **self.kwargs)
+        values = {k: utils.get_ts(ds=ds, geom=feature['geometry'], vi_calculator=v)[1]
+                  for k, v in self.vis.items()}
+        chips = utils.get_chips(ds=ds, geom=feature['geometry'], size=self.window_size,
+                                compositor=self.compositor, res=self.res, **self.kwargs)
         return unique_idx, dates, chips, values, feature['geometry'], self.crs
 
 
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
+
