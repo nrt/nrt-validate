@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=40.8.0", "wheel"]
+requires = ["setuptools>=64",
+            "wheel",
+            "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nrt-validate"
-version = "0.1.0"  # Replace with dynamic versioning if necessary
 description = "Validation of alerting system results produced by tools like nrt"
 readme = "README.rst"
 authors = [
@@ -13,12 +14,14 @@ authors = [
     {name = "Jonas Viehweger"}
 ]
 keywords = ["sentinel2", "xarray", "validation", "forest", "monitoring", "change"]
-license = {file = "LICENSE"}
+dynamic = ["version"]
+license = {text = "EUPL-1.2"}
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)"
 ]
 requires-python = ">= 3.9"
 dependencies = [
@@ -41,7 +44,8 @@ dependencies = [
     "netCDF4",
     "kneed",
     "requests",
-    "click"
+    "click",
+    "nrt-data"
 ]
 
 [project.urls]
@@ -53,7 +57,7 @@ nrtval = "nrt.validate.nrtval:cli"
 [project.optional-dependencies]
 dask = ["dask"]
 stac = ["pystac-client", "odc-stac"]
-docs = ["sphinx", "sphinx_rtd_theme", "matplotlib", "sphinx-gallery"]
+docs = ["sphinx", "sphinx_rtd_theme"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -62,3 +66,6 @@ include = ["nrt.validate"]
 [tool.setuptools.package-data]
 "nrt.validate" = ["static/*",
                   "notebooks/*"]
+
+[tool.setuptools_scm]
+fallback_version = "9999"
