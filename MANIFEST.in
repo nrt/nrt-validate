@@ -1,6 +1,11 @@
-include LICENSE README.rst setup.py
+include LICENSE README.rst pyproject.toml
 include nrt/validate/static/*
 include nrt/validate/demo_notebook.ipynb
 recursive-include docs *.rst
 recursive-include docs *.png
+prune sandbox
+prune */__pycache__ 
+prune docs/_build
+exclude *.pyc
+exclude *.pyo
 exclude MANIFEST.in
