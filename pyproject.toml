@@ -45,7 +45,8 @@ dependencies = [
     "kneed",
     "requests",
     "click",
-    "nrt-data"
+    "nrt-data",
+    "voila"
 ]
 
 [project.urls]
