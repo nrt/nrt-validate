@@ -53,3 +53,29 @@ class CR_SWIR(BaseS2Index):
                        ds[self.nir] - (1612 - 864) * np.divide(ds[self.swir2] - ds[self.nir],
                                                                2194 - 864))
         return da
+
+
+class NCDI(BaseS2Index):
+    """Experimental Normalized SWIR1 Continuum Difference Index
+
+    A normalized variation of the ``CR_SWIR`` index. Instead of dividing the
+    SWIR1 reflectance by the SWIR1 continuum, this index computes a normalized
+    difference between them. It is therefore calculated as:
+
+    .. math::
+
+        NDCI = \frac{{\text{SWIR}_{1-C} - \text{SWIR}_{1-R}}}{{\text{SWIR}_{1-C} + \text{SWIR}_{1-R}}}
+
+    Where:
+
+        - :math:`SWIR_{1-C}` is the continuum interpolated between NIR and SWIR2
+          for SWIR1 wavelength.
+        - :math:`SWIR_{1-R}` is the SWIR1 reflectance value.
+    """
+    def __call__(self, ds):
+        ds = ds.astype(np.float32)
+        swirc = ds[self.nir] - (1612 - 864) * np.divide(ds[self.swir2] - ds[self.nir],
+                                                        2194 - 864)
+        swirr = ds[self.swir1]
+        da = (swirc - swirr) / (swirc + swirr)
+        return da
