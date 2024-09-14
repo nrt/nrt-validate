@@ -49,7 +49,7 @@ class GridSearch:
             >>> # Instantiate and run GridSearch
             >>> gs = GridSearch(algorithm=EWMA, param_grid=param_grid,
             ...                 scoring=f1_score_at_lag)
-            >>> gs.fit(history_da=history_da, monitor_da=monitor_da, shapes_true=shapes_true,
+            >>> gs.fit(history_da=history_da, monitor_da=monitor_da, shapes_true=shapes_true, reduce_shape=False,
             ...        begin=datetime.datetime(2019,1,1), negative_tolerance=20,
             ...        lag=60)
             >>> # Get the best parameters and score
@@ -65,13 +65,20 @@ class GridSearch:
         self.scoring = scoring
         self.results = []
 
-    def fit(self, history_da, monitor_da, shapes_true, **scoring_params):
+    def fit(self, history_da, monitor_da, shapes_true,
+            reduce_shape=False, **scoring_params):
         """Fit the algorithm using the parameter grid and calculate scores for each set of parameters.
 
         Args:
             history_da (xarray.DataArray): DataArray for the historical period.
             monitor_da (xarray.DataArray): DataArray for the monitoring period.
             shapes_true (iterable): Iterable of (geometry, value) pairs for the reference samples.
+            reduce_shape (bool): If ``True``, the algorithm restricts computations to the rows and columns
+                corresponding to the reference samples, potentially increasing computation speed by
+                operating on a smaller subset of the data. However, if the number of reference samples
+                exceeds the size of the array dimensions (e.g., more samples than the number of rows or columns),
+                this may lead to the creation of a larger intermediate array due to the indexing strategy used,
+                which can increase computation time instead of reducing it.
             scoring_params: Additional parameters for the scoring function.
         """
         # Rasterize the reference feature collection (shapes_true)
@@ -83,6 +90,18 @@ class GridSearch:
             dtype=np.int16
         )
         mask = np.where(y_true_2d == -1, 0, 1)
+        if reduce_shape:
+            # Attempt to reduce mask
+            y_indices, x_indices = np.where(mask == 1)
+            ixgrid = np.ix_(y_indices, x_indices)
+            mask = mask[ixgrid]
+            diag = np.eye(mask.shape[0],dtype=bool)
+            mask[~diag] = 0
+            y_true_2d = y_true_2d[ixgrid]
+            y_true_2d[~diag] = 0
+            # Same for history and monitor dataarrays
+            history_da = history_da.isel(indexers={'y':y_indices, 'x':x_indices})
+            monitor_da = monitor_da.isel(indexers={'y':y_indices, 'x':x_indices})
         y_true = y_true_2d[mask == 1]
 
         # Generate all combinations of parameter values
@@ -102,6 +121,7 @@ class GridSearch:
                 nrt_class.monitor(array=array, date=date)
             # Retrieve the predicted detection dates
             y_pred = nrt_class.detection_date[mask == 1]
+            print(y_pred.sum())
             # Calculate the score using the provided scoring function
             score = self.scoring(y_true=y_true, y_pred=y_pred, **scoring_params)
             # Save results
