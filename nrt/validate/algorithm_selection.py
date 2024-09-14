@@ -121,7 +121,6 @@ class GridSearch:
                 nrt_class.monitor(array=array, date=date)
             # Retrieve the predicted detection dates
             y_pred = nrt_class.detection_date[mask == 1]
-            print(y_pred.sum())
             # Calculate the score using the provided scoring function
             score = self.scoring(y_true=y_true, y_pred=y_pred, **scoring_params)
             # Save results
