@@ -46,7 +46,8 @@ dependencies = [
     "requests",
     "click",
     "nrt-data",
-    "voila"
+    "voila",
+    "ipykernel"
 ]
 
 [project.urls]

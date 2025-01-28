@@ -72,17 +72,17 @@ class EsriWaybackBasemap:
 
         date_timeid_mapping = sorted(date_timeid_mapping)
 
-        # Filter to get R01 and R13 basemap versions per year
+        # Filter to get R01 and R08 basemap versions per year
         filtered_mapping = []
         years = set(datetime.datetime.strptime(date, "%Y-%m-%d").year for date, _, _ in date_timeid_mapping)
         for year in sorted(years):
             year_entries = [entry for entry in date_timeid_mapping if int(entry[0][:4]) == year]
             r01_entries = [entry for entry in year_entries if 'R01' in entry[1]]
-            r13_entries = [entry for entry in year_entries if 'R13' in entry[1]]
+            r08_entries = [entry for entry in year_entries if 'R08' in entry[1]]
             if r01_entries:
                 filtered_mapping.append(r01_entries[0])
-            if r13_entries:
-                filtered_mapping.append(r13_entries[0])
+            if r08_entries:
+                filtered_mapping.append(r08_entries[0])
 
         return filtered_mapping
 
