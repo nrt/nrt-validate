@@ -131,7 +131,8 @@ def get_chips(ds, geom, size, compositor=SimpleComposite(), res=None, scale=4,
         slice_ = cube_sub.sel(time=date)
         rgb = compositor(slice_)
         imgs.append(np2ipw(rgb, geom=geom, transform=transform,
-                           res=res, outline_color=outline_color))
+                           res=res, outline_color=outline_color,
+                           scale=scale))
     return imgs
 
 
