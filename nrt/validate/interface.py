@@ -143,13 +143,9 @@ class Vits(HasTraits):
         self.dates = dates
         self.values = values # Let's say this is a dict
         self.default_vi = default_vi
-        # Dummy bqplot highlighted point out of view
+        self.colors =  ['blue'] * len(self.dates)
         self.vi_values = Scatter(x=self.dates, y=self.values[self.default_vi],
-                                 scales={'x': self.x_sc, 'y': self.y_sc})
-        self.highlighted_point = Scatter(x=[-1000], y=[-1000],
-                                         scales={'x': self.x_sc, 'y': self.y_sc},
-                                         preserve_domain={'x': True, 'y': True},
-                                         colors=['red'])
+                                 scales={'x': self.x_sc, 'y': self.y_sc}, colors=self.colors)
         self.vlines = [self._create_vline(bp) for bp in self.breakpoints]
         # Smooth fit lines
         self.model = PartitionedHarmonicTrendModel(dates)
@@ -199,7 +195,6 @@ class Vits(HasTraits):
                     orientation='vertical', side='left')
         # Create and display the figure
         self.figure = Figure(marks=[self.vi_values,
-                                    self.highlighted_point,
                                     *self.vlines,
                                     *self.fitted_lines],
                        axes=[x_ax, y_ax],
@@ -232,17 +227,15 @@ class Vits(HasTraits):
                         layout=ipw.Layout(height='100%', width='70%'))
 
     def update_highlighted_point(self, idx):
-        """Update the coordinates of the highlighted point based on idx.
+        """Update the color of the highlighted point based on idx.
 
         Args:
             idx (int or None): Index of the point to highlight or None.
         """
+        self.colors = ['blue'] * len(self.colors)
         if idx is not None:
-            self.highlighted_point.x = [self.dates[idx]]
-            self.highlighted_point.y = [self.values[self.current_vi][idx]]
-        else:
-            self.highlighted_point.x = [-1000]
-            self.highlighted_point.y = [-1000]
+            self.colors[idx] = 'red'
+        self.vi_values.colors = self.colors
 
     def _create_fit_lines(self):
         dates, predictions = self.model.fit_predict(self.values[self.current_vi],
@@ -256,7 +249,6 @@ class Vits(HasTraits):
     def redraw_fit_lines(self, change):
         self.fitted_lines = self._create_fit_lines()
         self.figure.marks = [self.vi_values,
-                             self.highlighted_point,
                              *self.vlines,
                              *self.fitted_lines]
 
@@ -267,7 +259,6 @@ class Vits(HasTraits):
         self.vlines = [self._create_vline(bp) for bp in self.breakpoints]
         # Update the figure with the new vlines
         self.figure.marks = [self.vi_values,
-                             self.highlighted_point,
                              *self.vlines,
                              *self.fitted_lines]
 
