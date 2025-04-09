@@ -1,35 +1,9 @@
 Changes
 =======
 
-0.2.0
------
+0.0.1a (September 2024)
+-----------------------
+Initial series of pre-releases on pypi of a package containing an interface
+for visual interpretation of temporal segments and preliminary code for spatio-temporal
+optimization and assessment of change monitoring
 
-- np.linalg.inv replaced by the more recommanded np.linalg.solve in many places
-- Integration of numba parallel accelerator in most fitting functions (new argument
-  to control number of threads in the .fit method of BaseNrt class)
-- Possibility to pass kwargs to function of data module that load xarray.Datasets
-  objects (particularly useful to specify chunking and get a dask based object)
-- New example in gallery on parallel fitting
-- Add a minimum python version requirement (>=3.9). 3.8 not longer tested
-
-
-0.1.1
------
-
-- New set of functions to generate synthetic data (single time-series and DataArrays)
-  added to the data module
-- Gallery section added to the documentation, with one example on use of synthetic data
-  for nrt simulation and computation of performance metrics 
-
-0.1.0 (2022-04-27)
-------------------
-
-- The report() method can now receive a list of layers as argument to select the
-  attributes of the monitoring instance to be retrieved and written to disk. Backward
-  compatibility of the .report() method is not affected but backward compatibility
-  of the private ._report() method, used to prepare the array is broken
-
-0.0.5 (2022-03-21)
-------------------
-
-- First pypi release
