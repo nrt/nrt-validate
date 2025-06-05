@@ -3,6 +3,7 @@ import datetime
 
 from rasterio import features
 import numpy as np
+import xarray as xr
 
 
 class GridSearch:
@@ -49,7 +50,7 @@ class GridSearch:
             >>> # Instantiate and run GridSearch
             >>> gs = GridSearch(algorithm=EWMA, param_grid=param_grid,
             ...                 scoring=f1_score_at_lag)
-            >>> gs.fit(history_da=history_da, monitor_da=monitor_da, shapes_true=shapes_true, reduce_shape=False,
+            >>> gs.fit(history_da=history_da, monitor_da=monitor_da, shapes_true=shapes_true,
             ...        begin=datetime.datetime(2019,1,1), negative_tolerance=20,
             ...        lag=60)
             >>> # Get the best parameters and score
@@ -65,20 +66,13 @@ class GridSearch:
         self.scoring = scoring
         self.results = []
 
-    def fit(self, history_da, monitor_da, shapes_true,
-            reduce_shape=False, **scoring_params):
+    def fit(self, history_da, monitor_da, shapes_true, **scoring_params):
         """Fit the algorithm using the parameter grid and calculate scores for each set of parameters.
 
         Args:
             history_da (xarray.DataArray): DataArray for the historical period.
             monitor_da (xarray.DataArray): DataArray for the monitoring period.
             shapes_true (iterable): Iterable of (geometry, value) pairs for the reference samples.
-            reduce_shape (bool): If ``True``, the algorithm restricts computations to the rows and columns
-                corresponding to the reference samples, potentially increasing computation speed by
-                operating on a smaller subset of the data. However, if the number of reference samples
-                exceeds the size of the array dimensions (e.g., more samples than the number of rows or columns),
-                this may lead to the creation of a larger intermediate array due to the indexing strategy used,
-                which can increase computation time instead of reducing it.
             scoring_params: Additional parameters for the scoring function.
         """
         # Rasterize the reference feature collection (shapes_true)
@@ -89,20 +83,30 @@ class GridSearch:
             transform=history_da.rio.transform(),
             dtype=np.int16
         )
-        mask = np.where(y_true_2d == -1, 0, 1)
-        if reduce_shape:
-            # Attempt to reduce mask
-            y_indices, x_indices = np.where(mask == 1)
-            ixgrid = np.ix_(y_indices, x_indices)
-            mask = mask[ixgrid]
-            diag = np.eye(mask.shape[0],dtype=bool)
-            mask[~diag] = 0
-            y_true_2d = y_true_2d[ixgrid]
-            y_true_2d[~diag] = 0
-            # Same for history and monitor dataarrays
-            history_da = history_da.isel(indexers={'y':y_indices, 'x':x_indices})
-            monitor_da = monitor_da.isel(indexers={'y':y_indices, 'x':x_indices})
-        y_true = y_true_2d[mask == 1]
+
+        # Retain only the pixels with reference data
+        y_idx, x_idx = np.where(y_true_2d != -1)
+        history_np_flat = history_da.data[:, y_idx, x_idx, np.newaxis]
+        monitor_np_flat = monitor_da.data[:, y_idx, x_idx, np.newaxis]
+
+        # Rebuild DataArrays with reduced shape (all samples in one dummy y dimension)
+        history_da_reduced = xr.DataArray(
+            history_np_flat,
+            dims=('time', 'y', 'x'),
+            coords={'time': history_da.time.copy(deep=True),
+                    'y': np.arange(history_np_flat.shape[1]),
+                    'x': [0]}
+        )
+        monitor_da_reduced = xr.DataArray(
+            monitor_np_flat,
+            dims=('time', 'y', 'x'),
+            coords={'time': monitor_da.time.copy(deep=True),
+                    'y': np.arange(monitor_np_flat.shape[1]),
+                    'x': [0]}
+        )
+
+        # Flatten reference data
+        y_true = y_true_2d[y_idx, x_idx]
 
         # Generate all combinations of parameter values
         param_names = list(self.param_grid.keys())
@@ -113,14 +117,14 @@ class GridSearch:
         for param_set in param_combinations:
             params = dict(zip(param_names, param_set))
             # Initialize the algorithm with current parameters
-            nrt_class = self.algorithm(mask=mask, **params)
+            nrt_class = self.algorithm(mask=None, **params)
             # Fit the model
             nrt_class.fit(dataarray=history_da)
             # Monitor for the given monitoring period
             for array, date in zip(monitor_da.values, monitor_da.time.values.astype('datetime64[s]').tolist()):
                 nrt_class.monitor(array=array, date=date)
             # Retrieve the predicted detection dates
-            y_pred = nrt_class.detection_date[mask == 1]
+            y_pred = nrt_class.detection_date[y_idx, x_idx]
             # Calculate the score using the provided scoring function
             score = self.scoring(y_true=y_true, y_pred=y_pred, **scoring_params)
             # Save results
