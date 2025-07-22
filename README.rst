@@ -2,7 +2,7 @@
 nrt-validate
 ************
 
-*nrt-validate is a companion package to [nrt](https://github.com/ec-jrc/nrt), designed for near real-time monitoring of satellite image time series. It extends nrt's capabilities by providing tools for visual interpretation of time-series data, and for the creation and management of reference/validation datasets.*
+*``nrt-validate`` is a companion package to `nrt <https://github.com/ec-jrc/nrt>`_, designed for near real-time monitoring of satellite image time series. It extends nrt's capabilities by providing tools for visual interpretation of time-series data, and for the creation and management of reference/validation datasets.*
 
 Features
 ========
