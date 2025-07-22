@@ -1,6 +1,13 @@
 Changes
 =======
 
+0.0.1a7 (July 2025)
+-------------------
+- Setup github action to automatically publish tagged commits on pypi
+- Add NDMI to list of indices
+- New convenience color composite class (S2SWIRx2) for S2 visualization with both SWIR bands
+- Stretch values adjusted for Tasselled Cap color composite
+
 0.0.1a (September 2024)
 -----------------------
 Initial series of pre-releases on pypi of a package containing an interface

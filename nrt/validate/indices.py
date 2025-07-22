@@ -36,6 +36,19 @@ class NDVI(BaseS2Index):
         return da
 
 
+class NDMI(BaseS2Index):
+    """NDMI calculator for Sentinel 2 data organized in an xarray Dataset
+
+    By default, the swir channel must be named ``'B11'`` and the nir channel
+    ``'B8A'`` as per the ``BaseS2Index`` base class. These defaults can be modified
+    at instantiation by passing for instance ``ndmi = NDMI(nir='B08')``
+    """
+    def __call__(self, ds):
+        ds = ds.astype(np.float32)
+        da = (ds[self.nir] - ds[self.swir1]) / (ds[self.nir] + ds[self.swir1] + 0.0000001)
+        return da
+
+
 class CR_SWIR(BaseS2Index):
     """CR_SWIR calculator for Sentinel 2 data organized in an xarray Dataset
 
