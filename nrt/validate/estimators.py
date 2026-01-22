@@ -2,7 +2,7 @@
 Statistical estimators for map accuracy assessment.
 """
 from abc import ABC, abstractmethod
-from typing import Tuple, Dict, Union, Any
+from typing import Tuple, Dict, Union, Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -12,14 +12,151 @@ class BaseEstimator(ABC):
     """Abstract strategy for accuracy estimation.
     """
     @abstractmethod
-    def estimate_mean(self, mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_mean(self, mask: np.ndarray,
+                      weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
         """Returns (Estimate, Standard Error) for a population mean/proportion."""
         pass
 
     @abstractmethod
-    def estimate_ratio(self, numerator_mask: np.ndarray, denominator_mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_ratio(self, numerator_mask: np.ndarray,
+                       denominator_mask: np.ndarray,
+                       weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
         """Returns (Estimate, Standard Error) for a ratio Y/X."""
         pass
+
+    def overall_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray) -> Tuple[float, float]:
+        """Computes Overall Accuracy (OA).
+
+        Args:
+            y_true: 1D array of reference labels.
+            y_pred: 1D array of map labels (must be aligned with y_true and strata).
+
+        Returns:
+            (Estimate, Standard Error)
+        """
+        # OA is simply the proportion of samples where label matches
+        mask = (np.array(y_true) == np.array(y_pred))
+        return self.estimate_mean(mask)
+
+    def user_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray, label: Any) -> Tuple[float, float]:
+        """Computes User's Accuracy (Precision) for a specific class.
+
+        Formula: P(Reference = label | Map = label)
+
+        Args:
+            y_true: 1D array of reference labels.
+            y_pred: 1D array of map labels.
+            label: The specific class ID to evaluate.
+
+        Returns:
+            (Estimate, Standard Error)
+        """
+        y_t = np.array(y_true)
+        y_p = np.array(y_pred)
+        # Numerator: Correctly classified as 'label' (True Positive)
+        num_mask = (y_p == label) & (y_t == label)
+        # Denominator: Classified as 'label' (Total Predicted Positive)
+        den_mask = (y_p == label)
+        return self.estimate_ratio(num_mask, den_mask)
+
+    def producer_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray, label: Any) -> Tuple[float, float]:
+        """Computes Producer's Accuracy (Recall) for a specific class.
+
+        Formula: P(Map = label | Reference = label)
+
+        Args:
+            y_true: 1D array of reference labels.
+            y_pred: 1D array of map labels.
+            label: The specific class ID to evaluate.
+
+        Returns:
+            (Estimate, Standard Error)
+        """
+        y_t = np.array(y_true)
+        y_p = np.array(y_pred)
+        # Numerator: Correctly classified as 'label' (True Positive)
+        num_mask = (y_t == label) & (y_p == label)
+        # Denominator: Actually is 'label' (Total Reference Positive)
+        den_mask = (y_t == label)
+        return self.estimate_ratio(num_mask, den_mask)
+
+    def f1_score(self, y_true: np.ndarray, y_pred: np.ndarray, label: Any,
+                 se_method: str = None, n_boot: int = 100) -> Tuple[float, float]:
+        """Computes the F1 Score for a specific class with optional SE estimation.
+
+        Args:
+            y_true: 1D array of reference labels.
+            y_pred: 1D array of map labels.
+            label: The specific class ID to evaluate.
+            se_method: Method for Standard Error calculation.
+                       Options: [None, 'simple_bootstrap'].
+                       Default is None (returns 0.0 for SE).
+            n_boot: Number of bootstrap iterations if se_method is 'simple_bootstrap'.
+
+        Returns:
+            (F1 Estimate, Standard Error)
+        """
+        # 1. Calculate Point Estimate (Always done on full data)
+        ua, _ = self.user_accuracy(y_true, y_pred, label)
+        pa, _ = self.producer_accuracy(y_true, y_pred, label)
+        if (ua + pa) == 0:
+            f1_est = 0.0
+        else:
+            f1_est = 2 * (ua * pa) / (ua + pa)
+
+        # 2. Calculate Standard Error based on method
+        if se_method is None:
+            return f1_est, 0.0
+        elif se_method == 'simple_bootstrap':
+            return self._bootstrap_f1(y_true, y_pred, label, n_boot, f1_est)
+        else:
+            raise ValueError(f"Unknown se_method: {se_method}")
+
+    def _bootstrap_f1(self, y_true, y_pred, label, n_boot, point_est):
+        """Bootstrap implementation that respects stratified weights.
+        """
+        # Ensure we have access to the strata definitions
+        if not hasattr(self, 'strata_labels'):
+            # Fallback for SRS or throw error
+            return point_est, 0.0
+
+        unique_strata = np.unique(self.strata_labels)
+        strata_indices = {s: np.where(self.strata_labels == s)[0] for s in unique_strata}
+        boot_f1s = []
+        for _ in range(n_boot):
+            resampled_indices = []
+            # STRATIFIED RESAMPLING
+            for s, idxs in strata_indices.items():
+                # Resample indices with replacement within this stratum
+                resampled_indices.append(np.random.choice(idxs, size=len(idxs), replace=True))
+            # Flatten to a single array of indices
+            full_idx = np.concatenate(resampled_indices)
+            # RESAMPLE DATA AND WEIGHTS TOGETHER
+            y_t_boot = y_true[full_idx]
+            y_p_boot = y_pred[full_idx]
+            # Critical: Weights must follow the resampled indices
+            w_boot = self.sample_weights[full_idx]
+            # Calculate Metric on Bootstrapped Sample
+            # We explicitly pass the aligned weights
+            # UA: Num = (Pred==L & True==L), Denom = (Pred==L)
+            ua_num = (y_p_boot == label) & (y_t_boot == label)
+            ua_den = (y_p_boot == label)
+            # Pass w_boot to ensure correct weighting
+            ua_boot, _ = self.estimate_ratio(ua_num, ua_den, weights=w_boot)
+            # PA: Num = (Pred==L & True==L), Denom = (True==L)
+            pa_num = (y_t_boot == label) & (y_p_boot == label)
+            pa_den = (y_t_boot == label)
+            pa_boot, _ = self.estimate_ratio(pa_num, pa_den, weights=w_boot)
+
+            if (ua_boot + pa_boot) > 0:
+                f1_boot = 2 * (ua_boot * pa_boot) / (ua_boot + pa_boot)
+                boot_f1s.append(f1_boot)
+            else:
+                boot_f1s.append(0.0)
+        # Standard Error is the Std Dev of the bootstrap estimates
+        # Using ddof=1 for sample standard deviation
+        se_boot = np.std(boot_f1s, ddof=1)
+        return point_est, se_boot
 
 
 class StratifiedEstimator(BaseEstimator):
@@ -133,10 +270,16 @@ class StratifiedEstimator(BaseEstimator):
         weight_map = (1.0 / self.meta['inclusion_prob']).to_dict()
         self.sample_weights = np.array([weight_map[s] for s in self.strata_labels])
 
-    def estimate_mean(self, mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_mean(self, mask: np.ndarray, weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
         """Estimates population mean (Eq. 2) and SE (Eq. 25).
         """
         y = mask.astype(int)
+
+        # --- BOOTSTRAP PATH ---
+        if weights is not None:
+            Y_hat = np.sum(y * weights)
+            return (Y_hat / self.total_pop), 0.0
+
         # 1. Point Estimate (Horvitz-Thompson)
         Y_hat = np.sum(y * self.sample_weights)
         mean_est = Y_hat / self.total_pop
@@ -152,11 +295,22 @@ class StratifiedEstimator(BaseEstimator):
         var_est = (1 / self.total_pop**2) * var_term.sum()
         return mean_est, np.sqrt(var_est)
 
-    def estimate_ratio(self, numerator_mask: np.ndarray, denominator_mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_ratio(self, numerator_mask: np.ndarray,
+                       denominator_mask: np.ndarray,
+                       weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
         """Estimates ratio R = Y/X and SE (Eq. 28).
         """
         y = numerator_mask.astype(int)
         x = denominator_mask.astype(int)
+
+        # --- BOOTSTRAP PATH ---
+        if weights is not None:
+            Y_hat = np.sum(y * weights)
+            X_hat = np.sum(x * weights)
+            if X_hat == 0: return 0.0, 0.0
+            return (Y_hat / X_hat), 0.0
+
+        # --- STANDARD STRATIFIED PATH ---
         # 1. Point Estimate
         Y_hat = np.sum(y * self.sample_weights)
         X_hat = np.sum(x * self.sample_weights)
@@ -182,14 +336,23 @@ class StratifiedEstimator(BaseEstimator):
 class SimpleRandomEstimator(BaseEstimator):
     """Estimator for Simple Random Sampling (SRS).
     """
-    def estimate_mean(self, mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_mean(self, mask: np.ndarray,
+                      weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
+        # For SRS, weights are uniform/ignored in standard calc
+        if weights is not None:
+             # If someone tries to bootstrap SRS with weights, handle or ignore?
+             # SRS usually implies equal weight.
+             pass
+
         n = len(mask)
         if n <= 1: return np.mean(mask), 0.0
         prop = np.mean(mask)
         se = np.sqrt(prop * (1 - prop) / (n - 1))
         return prop, se
 
-    def estimate_ratio(self, numerator_mask: np.ndarray, denominator_mask: np.ndarray) -> Tuple[float, float]:
+    def estimate_ratio(self, numerator_mask: np.ndarray,
+                       denominator_mask: np.ndarray,
+                       weights: Optional[np.ndarray] = None) -> Tuple[float, float]:
         # Filter to denominator domain
         subset = denominator_mask.astype(bool)
         if not np.any(subset):
