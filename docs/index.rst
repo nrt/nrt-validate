@@ -14,6 +14,7 @@ Welcome to nrt-validate's documentation!
 
    quickstart
    interface
+   estimators
    api_reference
 
 
