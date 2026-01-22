@@ -17,6 +17,14 @@ nrt.validate.composites module
    :undoc-members:
    :show-inheritance:
 
+nrt.validate.estimators module
+------------------------------
+
+.. automodule:: nrt.validate.estimators
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 nrt.validate.fitting module
 ---------------------------
 
