@@ -368,6 +368,278 @@ class SimpleRandomEstimator(BaseEstimator):
         return prop, se
 
 
+class TwoStageClusterEstimator(BaseEstimator):
+    """Estimator for Stratified Two-Stage Cluster Sampling.
+
+    METHODOLOGY NOTE:
+    This class implements the **"Ultimate Cluster"** variance estimator (Särndal et al., 1992).
+    It simplifies variance estimation by treating the Primary Sampling Unit (PSU) as the
+    fundamental unit of analysis.
+
+    Instead of explicitly summing "Between-PSU Variance" + "Within-PSU Variance",
+    this method aggregates all SSUs (pixels) to calculate a weighted total for each PSU,
+    and then calculates the variance between these PSU totals. This automatically
+    captures the total variance (both stages) under the assumption that PSUs are sampled
+    with replacement (or that the sampling fraction is small).
+
+    This approach is standard for large-scale remote sensing (e.g., Stehman & Selkowitz, 2010)
+    because it is robust to complex second-stage designs (like pixel stratification)
+    without requiring complex covariance formulas.
+
+    Examples:
+        >>> import numpy as np
+        >>> # Synthetic Data verified against R 'survey' package (v4.0)
+        >>> # Scenario:
+        >>> #   - 2 Stratum (Region_A, Region_B)
+        >>> #   - 4 PSUs sampled per Stratum (8 PSUs total) -> No lonely PSUs!
+        >>> #   - 5 SSUs sampled per PSU (40 SSUs total)
+        >>> #   - Weights: Region_A=10, Region_B=20 (representing different sampling probs)
+        >>>
+        >>> # Data Setup
+        >>> strata_1 = np.array(['A']*20 + ['B']*20)  # 20 pixels in A, 20 in B
+        >>> psu_ids = np.concatenate([
+        ...     [1]*5, [2]*5, [3]*5, [4]*5,   # 4 PSUs in A
+        ...     [5]*5, [6]*5, [7]*5, [8]*5    # 4 PSUs in B
+        ... ])
+        >>> weights = np.concatenate([[10]*20, [20]*20])
+        >>>
+        >>> # Target Variable (Mask):
+        >>> # Region A: PSUs are fairly consistent (mostly True)
+        >>> # Region B: PSUs are highly variable (some all True, some all False)
+        >>> # Constructing a pattern:
+        >>> # PSU 1: 5/5 True
+        >>> # PSU 2: 4/5 True
+        >>> # PSU 3: 5/5 True
+        >>> # PSU 4: 4/5 True (Region A is "High Accuracy")
+        >>> # PSU 5: 0/5 True
+        >>> # PSU 6: 1/5 True
+        >>> # PSU 7: 0/5 True
+        >>> # PSU 8: 5/5 True (Region B is "Noisy/Mixed")
+        >>> mask = np.array([
+        ...     1,1,1,1,1,  1,1,1,1,0,  1,1,1,1,1,  1,1,1,1,0,  # A
+        ...     0,0,0,0,0,  1,0,0,0,0,  0,0,0,0,0,  1,1,1,1,1   # B
+        ... ], dtype=bool)
+        >>>
+        >>> # Initialize Estimator
+        >>> est = TwoStageClusterEstimator(psu_ids, strata_1, weights, se_method='analytical')
+        >>>
+        >>> # 1. Point Estimate (Mean)
+        >>> # Manual Logic:
+        >>> # Stratum A Est: High proportion (~0.9) * Weight 10
+        >>> # Stratum B Est: Low proportion (~0.3) * Weight 20
+        >>> # Region B dominates due to weight. Expect mean around 0.5.
+        >>> mean, se = est.estimate_mean(mask)
+        >>>
+        >>> # Validated against R: svyratio(~y, ~ind, design=svydesign(id=~psu, strata=~strata, weights=~w))
+        >>> # R Result: Mean = 0.500
+        >>> print(f"{mean:.3f}")
+        0.500
+
+        >>> # 2. Standard Error (Ultimate Cluster)
+        >>> # Validated against R Result: SE = 0.1598611
+        >>> print(f"{se:.7f}")
+        0.1598611
+
+        >>> # 3. Effective Sample Size
+        >>> # Count of PSUs with at least 1 positive sample
+        >>> # In A: All 4 PSUs have positives.
+        >>> # In B: PSU 6 has 1 positive, PSU 8 has 5 positives. (PSU 5, 7 have 0).
+        >>> # Total = 4 + 2 = 6
+        >>> est.effective_sample_size(mask)
+        6
+
+    """
+    def __init__(self,
+                 psu_ids: np.ndarray,
+                 strata_1_ids: np.ndarray,
+                 global_weights: np.ndarray,
+                 se_method: str = 'analytical',
+                 n_boot: int = 500,
+                 strata_1_pop_sizes: Optional[Dict[Any, int]] = None):
+
+        self.psu_ids = np.array(psu_ids)
+        self.strata_1 = np.array(strata_1_ids)
+        self.weights = np.array(global_weights)
+        self.se_method = se_method
+        self.n_boot = n_boot
+        # Pre-calculate Stage 1 stats (nh)
+        df_meta = pd.DataFrame({'s1': self.strata_1, 'psu': self.psu_ids})
+        self.s1_stats = df_meta.drop_duplicates().groupby('s1')['psu'].count()
+        # sampling_fraction_map stores 'f = nh/Nh'
+        self.sampling_fraction_map = {}
+        if strata_1_pop_sizes:
+            for s1, nh in self.s1_stats.items():
+                Nh = strata_1_pop_sizes.get(s1)
+                if Nh is None:
+                    # Missing pop size -> Assume Infinite -> f=0
+                    self.sampling_fraction_map[s1] = 0.0
+                else:
+                    self.sampling_fraction_map[s1] = nh / Nh
+        else:
+            # No pop sizes provided -> Assume Infinite -> f=0
+            for s1 in self.s1_stats.index:
+                self.sampling_fraction_map[s1] = 0.0
+
+    def estimate_mean(self, mask: np.ndarray,
+                      weights: Optional[np.ndarray] = None,
+                      compute_se: bool = True) -> Tuple[float, float]:
+        """
+        Estimates population mean/proportion.
+        Technically implemented as a Ratio of Totals (Total Y / Total Pop)
+        to handle variable PSU sizes correctly.
+        """
+        if weights is not None:
+             return np.average(mask, weights=weights), 0.0
+        y = mask.astype(float)
+        x = np.ones_like(y)
+        # Fast Point Estimate
+        df_temp = pd.DataFrame({'wy': y * self.weights, 'wx': x * self.weights})
+        Y_hat = df_temp['wy'].sum()
+        X_hat = df_temp['wx'].sum()
+        if X_hat == 0: return 0.0, 0.0
+        R_hat = Y_hat / X_hat
+        if not compute_se:
+            return R_hat, 0.0
+        if self.se_method == 'analytical':
+            return self._analytical_variance(y, x)
+        elif self.se_method == 'bootstrap':
+            return self._bootstrap_variance(y, x, n_boot=self.n_boot)
+        else:
+            raise ValueError(f"Unknown se_method: {self.se_method}")
+
+    def estimate_ratio(self, numerator_mask: np.ndarray,
+                       denominator_mask: np.ndarray,
+                       weights: Optional[np.ndarray] = None,
+                       compute_se: bool = True) -> Tuple[float, float]:
+
+        if weights is not None:
+            num = np.sum(numerator_mask * weights)
+            den = np.sum(denominator_mask * weights)
+            return (num / den) if den != 0 else 0.0, 0.0
+
+        y = numerator_mask.astype(float)
+        x = denominator_mask.astype(float)
+        if self.se_method == 'analytical':
+            return self._analytical_variance(y, x)
+        elif self.se_method == 'bootstrap':
+            return self._bootstrap_variance(y, x, n_boot=self.n_boot)
+        else:
+            raise ValueError(f"Unknown se_method: {se_method}")
+
+    def effective_sample_size(self, mask: np.ndarray) -> int:
+        """
+        Returns 'tPSU': the count of unique PSUs containing at least one positive sample.
+        Reference: Wickham et al. (2003).
+        """
+        subset_idx = np.where(mask)[0]
+        if len(subset_idx) == 0:
+            return 0
+        return len(np.unique(self.psu_ids[subset_idx]))
+
+    # --------------------------------------------------------------------------
+    # INTERNAL: Analytical Approach (Stehman / Zimmerman)
+    # --------------------------------------------------------------------------
+    def _analytical_variance(self, y_arr, x_arr) -> Tuple[float, float]:
+        """
+        Calculates variance using the 'Ultimate Cluster' method.
+        This aggregates data to PSU totals and computes variance between PSU totals.
+        """
+        # 1. Aggregate to PSU level
+        df = pd.DataFrame({
+            's1': self.strata_1,
+            'psu': self.psu_ids,
+            'wy': y_arr * self.weights,
+            'wx': x_arr * self.weights
+        })
+        psu_totals = df.groupby(['s1', 'psu'])[['wy', 'wx']].sum().reset_index()
+
+        # 2. Re-calculate R_hat specifically for the variance logic consistency
+        Y_hat = psu_totals['wy'].sum()
+        X_hat = psu_totals['wx'].sum()
+        if X_hat == 0: return 0.0, 0.0
+        R_hat = Y_hat / X_hat
+
+        # 3. Residuals
+        psu_totals['u'] = psu_totals['wy'] - R_hat * psu_totals['wx']
+
+        var_est_total = 0.0
+
+        for s1, group in psu_totals.groupby('s1'):
+            nh = len(group)
+            if nh < 2:
+                continue
+
+            s2_u = group['u'].var(ddof=1)
+            # FPC term is (1 - f)
+            f = self.sampling_fraction_map.get(s1, 0.0)
+
+            # Variance contribution: nh * (1-f) * s2_u
+            var_est_total += (nh * (1.0 - f) * s2_u)
+
+        se = (1 / X_hat) * np.sqrt(var_est_total)
+        return R_hat, se
+
+    # --------------------------------------------------------------------------
+    # INTERNAL: Bootstrap Approach (Gallaun et al. 2015)
+    # --------------------------------------------------------------------------
+    def _bootstrap_variance(self, y_arr, x_arr, n_boot=500) -> Tuple[float, float]:
+        """
+        Calculates variance using Stratified Cluster Bootstrap.
+        Resamples PSUs with replacement within Stage 1 strata.
+        """
+        # Data preparation: Map PSUs to indices for fast resampling
+        # We need a structure: Stratum -> [List of unique PSU IDs]
+        df_map = pd.DataFrame({'s1': self.strata_1, 'psu': self.psu_ids})
+        unique_psus_per_stratum = df_map.drop_duplicates().groupby('s1')['psu'].apply(list).to_dict()
+
+        # We also need a fast way to get all data indices for a specific PSU
+        # psu_to_indices = {psu_id: [idx1, idx2, ...]}
+        # Creating this dictionary can be slow, so we use pandas for speed
+        df_indices = pd.DataFrame({'psu': self.psu_ids})
+        psu_groups = df_indices.groupby('psu').indices # Dict[psu, array_of_indices]
+
+        # Calculate Point Estimate on full data first
+        Y_hat_full = np.sum(y_arr * self.weights)
+        X_hat_full = np.sum(x_arr * self.weights)
+        if X_hat_full == 0: return 0.0, 0.0
+        R_hat = Y_hat_full / X_hat_full
+
+        boot_stats = []
+
+        # Bootstrap Loop
+        for _ in range(n_boot):
+            boot_indices = []
+            # Stratified Resampling of PSUs
+            for s1, psu_list in unique_psus_per_stratum.items():
+                nh = len(psu_list)
+                # Resample PSUs with replacement
+                resampled_psus = np.random.choice(psu_list, size=nh, replace=True)
+                # Collect all SSUs (pixels) belonging to these PSUs
+                for p_id in resampled_psus:
+                    boot_indices.append(psu_groups[p_id])
+
+            if not boot_indices:
+                boot_stats.append(0.0)
+                continue
+            # Flatten indices
+            # Note: np.concatenate is faster than appending lists
+            full_idx = np.concatenate(boot_indices)
+            # Compute Estimate on Bootstrap Sample
+            # Weights are kept as-is (standard survey bootstrap method)
+            w_b = self.weights[full_idx]
+            y_b = y_arr[full_idx]
+            x_b = x_arr[full_idx]
+            Y_b = np.sum(y_b * w_b)
+            X_b = np.sum(x_b * w_b)
+            if X_b == 0:
+                boot_stats.append(0.0)
+            else:
+                boot_stats.append(Y_b / X_b)
+        # SE is the standard deviation of the bootstrap distribution
+        se = np.std(boot_stats, ddof=1)
+        return R_hat, se
+
+
 if __name__ == "__main__":
     import doctest
-    doctest.testmod(verbose=True)
+    doctest.testmod(verbose=False)
