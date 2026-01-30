@@ -81,7 +81,7 @@ class BaseEstimator(ABC):
         return self.estimate_ratio(num_mask, den_mask)
 
     def f1_score(self, y_true: np.ndarray, y_pred: np.ndarray, label: Any,
-                 se_method: str = None, n_boot: int = 100) -> Tuple[float, float]:
+                 se_method: str = None, n_boot: int = 500) -> Tuple[float, float]:
         """Computes the F1 Score for a specific class with optional SE estimation.
 
         Args:
@@ -89,7 +89,7 @@ class BaseEstimator(ABC):
             y_pred: 1D array of map labels.
             label: The specific class ID to evaluate.
             se_method: Method for Standard Error calculation.
-                       Options: [None, 'simple_bootstrap'].
+                       Options: [None, 'simple_bootstrap', 'bootstrap'].
                        Default is None (returns 0.0 for SE).
             n_boot: Number of bootstrap iterations if se_method is 'simple_bootstrap'.
 
@@ -107,7 +107,7 @@ class BaseEstimator(ABC):
         # 2. Calculate Standard Error based on method
         if se_method is None:
             return f1_est, 0.0
-        elif se_method == 'simple_bootstrap':
+        elif se_method in ['simple_bootstrap', 'bootstrap']:
             return self._bootstrap_f1(y_true, y_pred, label, n_boot, f1_est)
         else:
             raise ValueError(f"Unknown se_method: {se_method}")
@@ -366,6 +366,27 @@ class SimpleRandomEstimator(BaseEstimator):
         prop = np.mean(vals)
         se = np.sqrt(prop * (1 - prop) / (n - 1))
         return prop, se
+
+    def _bootstrap_f1(self, y_true, y_pred, label, n_boot, point_est):
+        """Bootstrap F1 Score for SRS (Simple Resampling)."""
+        indices = np.arange(len(y_true))
+        f1_scores = []
+        for _ in range(n_boot):
+            boot_idx = np.random.choice(indices, len(indices), replace=True)
+            y_t_b = y_true[boot_idx]
+            y_p_b = y_pred[boot_idx]
+
+            tp_b = np.sum((y_t_b == label) & (y_p_b == label))
+            fp_b = np.sum((y_t_b != label) & (y_p_b == label))
+            fn_b = np.sum((y_t_b == label) & (y_p_b != label))
+            denom_b = 2*tp_b + fp_b + fn_b
+
+            if denom_b > 0:
+                f1_scores.append(2*tp_b / denom_b)
+            else:
+                f1_scores.append(0.0)
+
+        return point_est, np.std(f1_scores, ddof=1)
 
 
 class TwoStageClusterEstimator(BaseEstimator):
@@ -638,6 +659,60 @@ class TwoStageClusterEstimator(BaseEstimator):
         # SE is the standard deviation of the bootstrap distribution
         se = np.std(boot_stats, ddof=1)
         return R_hat, se
+
+    def _bootstrap_f1(self, y_true, y_pred, label, n_boot, point_est):
+        """Bootstrap F1 Score for Two-Stage Cluster Sampling (Resampling PSUs)."""
+        # Create DataFrame to handle grouping
+        df = pd.DataFrame({
+            'psu': self.psu_ids,
+            'stratum': self.strata_1,
+            'y_t': y_true,
+            'y_p': y_pred,
+            'w': self.weights
+        })
+
+        # Identify unique PSUs per stratum for resampling
+        # Drop duplicates to get list of PSU IDs
+        psus_per_stratum = df[['stratum', 'psu']].drop_duplicates().groupby('stratum')['psu'].apply(list)
+
+        # Pre-group data by PSU for faster access inside loop
+        psu_groups = df.groupby('psu')
+
+        # Helper to calc F1 on a dataframe/group
+        def calc_f1_weighted(dframe):
+            w = dframe['w'].values
+            yt = dframe['y_t'].values
+            yp = dframe['y_p'].values
+
+            mask_pred = (yp == label)
+            mask_true = (yt == label)
+
+            # Weighted Counts
+            tp_w = np.sum(w[mask_pred & mask_true])
+            fp_w = np.sum(w[mask_pred & (~mask_true)])
+            fn_w = np.sum(w[(~mask_pred) & mask_true])
+
+            # F1 = 2*TP / (2*TP + FP + FN)
+            denom = 2*tp_w + fp_w + fn_w
+            return 2*tp_w / denom if denom > 0 else 0.0
+
+        f1_scores = []
+        for _ in range(n_boot):
+            boot_df_list = []
+            for s, psus in psus_per_stratum.items():
+                # Resample PSUs with replacement
+                resampled_psus = np.random.choice(psus, size=len(psus), replace=True)
+                for p in resampled_psus:
+                    boot_df_list.append(psu_groups.get_group(p))
+
+            if not boot_df_list:
+                f1_scores.append(0.0)
+                continue
+
+            boot_df = pd.concat(boot_df_list)
+            f1_scores.append(calc_f1_weighted(boot_df))
+
+        return point_est, np.std(f1_scores, ddof=1)
 
 
 if __name__ == "__main__":
