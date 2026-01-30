@@ -16,6 +16,7 @@ Welcome to nrt-validate's documentation!
    interface
    estimators
    api_reference
+   auto_examples/index
 
 
 Indices and tables

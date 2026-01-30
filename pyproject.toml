@@ -59,7 +59,10 @@ nrtval = "nrt.validate.nrtval:cli"
 [project.optional-dependencies]
 dask = ["dask"]
 stac = ["pystac-client", "odc-stac"]
-docs = ["sphinx", "sphinx_rtd_theme"]
+docs = ["sphinx",
+        "sphinx_rtd_theme",
+        "matplotlib",
+        "sphinx-gallery"]
 
 [tool.setuptools.packages.find]
 where = ["."]
