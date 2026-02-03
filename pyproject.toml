@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.urls]
-homepage = "https://code.europa.eu/jrc-forest/nrt-validate"
+homepage = "https://github.com/nrt/nrt-validate"
 
 [project.scripts]
 nrtval = "nrt.validate.nrtval:cli"
