@@ -5,6 +5,9 @@ Spatial accuracy estimators
 ``nrt-validate`` implements various accuracy estimators. This example demonstrates their use,
 comparing their precision and discussing trade-offs involved. Although nrt-validate has a strong focus
 on the temporal aspects of things, for greater separation of concerns this example is limited to the spatial accuracy aspects.
+
+**Validation Note:** The results presented here have been validated against the R ``survey`` package 
+to ensure statistical correctness of the point estimates and standard errors.
 """
 
 import numpy as np
@@ -13,6 +16,7 @@ import matplotlib.colors as colors
 import matplotlib.patches as mpatches
 import pandas as pd
 from scipy.ndimage import binary_dilation
+from pprint import pprint
 
 from nrt.data import simulate
 from nrt.validate.estimators import (
@@ -40,9 +44,9 @@ np.random.seed(42)
 # 1. Generate Landscape (Reference)
 # 0=Non-Forest, 1=Forest, 2=Loss
 land_cover, loss_dates = simulate.make_landscape(
-    shape=(2000, 2000), 
-    year=2020, 
-    forest_pct=0.7, 
+    shape=(2000, 2000),
+    year=2020,
+    forest_pct=0.7,
     loss_pct=0.03, # 3% of landscape is loss
     seed=42
 )
@@ -50,9 +54,9 @@ land_cover, loss_dates = simulate.make_landscape(
 # 2. Generate Prediction
 # 0=Stable, 1=Loss
 pred_lc, pred_dates = simulate.make_prediction(
-    land_cover, 
-    loss_dates, 
-    omission_rate=0.2, 
+    land_cover,
+    loss_dates,
+    omission_rate=0.2,
     commission_rate=0.005,
     seed=42
 )
@@ -318,52 +322,39 @@ psu_flat = psu_map.ravel()
 all_psus = np.unique(psu_flat)
 selected_psus = np.random.choice(all_psus, 50, replace=False)
 
-# Select 20 SSUs per cluster
+# Select 20 SSUs per cluster (or all available forest pixels)
 sample_cluster_idx = []
 actual_psu_ids = []
+weights_cluster = []
+
+# Global weight stage 1
+w_stage1 = len(all_psus) / 50
 
 for psu in selected_psus:
-    # Candidates in this PSU that are Forest
+    # Candidates in this PSU that are Forest (optimized using valid_idx for speed)
     candidates = valid_idx[psu_flat[valid_idx] == psu]
-    if len(candidates) > 0:
-        # Sample 20 or all if < 20
-        n_take = min(20, len(candidates))
+    pop_forest_in_psu = len(candidates)
+
+    if pop_forest_in_psu > 0:
+        n_take = min(20, pop_forest_in_psu)
         picked = np.random.choice(candidates, n_take, replace=False)
+
         sample_cluster_idx.append(picked)
         actual_psu_ids.extend([psu] * n_take)
 
+        # Domain Estimation Weighting
+        w_stage2 = pop_forest_in_psu / n_take
+        w_final = w_stage1 * w_stage2
+        weights_cluster.extend([w_final] * n_take)
+
 sample_cluster_idx = np.concatenate(sample_cluster_idx)
 actual_psu_ids = np.array(actual_psu_ids)
-
-# Global weights calculation
-w_stage1 = len(all_psus) / 50
-weights_cluster = []
-
-# Pre-flatten mask to avoid broadcasting errors in loop
-forest_mask_flat = forest_mask.ravel()
-
-for psu in actual_psu_ids:
-    # Domain Estimation:
-    # Count only FOREST pixels in the cluster (the domain of interest)
-    pop_in_psu = np.sum((psu_flat == psu) & forest_mask_flat)
-    
-    # Count sampled FOREST pixels
-    samp_in_psu = np.sum(actual_psu_ids == psu)
-    
-    if samp_in_psu == 0:
-        w_stage2 = 0
-    else:
-        # Weight reflects the forest population the sample represents
-        w_stage2 = pop_in_psu / samp_in_psu
-        
-    weights_cluster.append(w_stage1 * w_stage2)
-
 y_t_clus = (land_cover.ravel()[sample_cluster_idx] == 2).astype(int)
 y_p_clus = (pred_lc.ravel()[sample_cluster_idx] == 1).astype(int)
 
 # strata_1_ids = zeros because no stage 1 stratification
 est_clus = TwoStageClusterEstimator(
-    psu_ids=actual_psu_ids, 
+    psu_ids=actual_psu_ids,
     strata_1_ids=np.zeros_like(actual_psu_ids),
     global_weights=np.array(weights_cluster),
     n_boot=200,
@@ -375,7 +366,7 @@ est_clus = TwoStageClusterEstimator(
 ua, ua_se = est_clus.user_accuracy(y_t_clus, y_p_clus, label=1)
 pa, pa_se = est_clus.producer_accuracy(y_t_clus, y_p_clus, label=1)
 # Now utilizing the built-in bootstrap method
-f1, f1_se = est_clus.f1_score(y_t_clus, y_p_clus, label=1, se_method='bootstrap') 
+f1, f1_se = est_clus.f1_score(y_t_clus, y_p_clus, label=1, se_method='bootstrap', n_boot=200)
 
 results["Cluster (SRS)"] = {'UA': (ua, ua_se), 'PA': (pa, pa_se), 'F1': (f1, f1_se)}
 
@@ -390,7 +381,7 @@ W_blocks = W // block_size
 for psu in unique_psus:
     row = psu // W_blocks
     col = psu % W_blocks
-    rect = mpatches.Rectangle((col * block_size, row * block_size), block_size, block_size, 
+    rect = mpatches.Rectangle((col * block_size, row * block_size), block_size, block_size,
                               linewidth=1, edgecolor='black', facecolor='none')
     ax.add_patch(rect)
 
@@ -408,6 +399,11 @@ plt.show()
 # We improve the cluster sampling by stratifying the **Stage 1 (PSUs)**. 
 # We classify blocks into "High Disturbance" and "Low Disturbance" based on the prediction map.
 # We then sample blocks from both strata to ensure we capture areas of interest.
+#
+# **Note on Stratification:** The stratification used for Stage 1 selection can be based 
+# on any ancillary data, such as administrative boundaries (e.g., states/provinces), 
+# disturbance intensity (as shown here), or biogeographic regions. The goal is to 
+# group similar PSUs to reduce variance.
 #
 # **Estimator:** ``TwoStageClusterEstimator``
 #
@@ -435,6 +431,9 @@ psu_strata_list = np.array([psu_strata_dict[p] for p in all_psus])
 # Sample 25 PSUs from Low, 25 from High
 psus_low = all_psus[psu_strata_list == 0]
 psus_high = all_psus[psu_strata_list == 1]
+N_low = len(psus_low)
+N_high = len(psus_high)
+
 sel_low = np.random.choice(psus_low, 25, replace=False)
 sel_high = np.random.choice(psus_high, 25, replace=False)
 selected_psus_s = np.concatenate([sel_low, sel_high])
@@ -443,43 +442,28 @@ selected_psus_s = np.concatenate([sel_low, sel_high])
 sample_cls_idx = []
 act_psu_ids_s = []
 s1_ids_s = []
+weights_cls = []
 
 for psu in selected_psus_s:
     s_label = psu_strata_dict[psu]
+    w1 = N_high / 25 if s_label == 1 else N_low / 25
     candidates = valid_idx[psu_flat[valid_idx] == psu]
-    if len(candidates) > 0:
-        n_take = min(20, len(candidates))
+    pop_forest_in_psu = len(candidates)
+
+    if pop_forest_in_psu > 0:
+        n_take = min(20, pop_forest_in_psu)
         picked = np.random.choice(candidates, n_take, replace=False)
+        w2 = pop_forest_in_psu / n_take
+        w_final = w1 * w2
+
         sample_cls_idx.append(picked)
         act_psu_ids_s.extend([psu] * n_take)
         s1_ids_s.extend([s_label] * n_take)
+        weights_cls.extend([w_final] * n_take)
 
 sample_cls_idx = np.concatenate(sample_cls_idx)
 act_psu_ids_s = np.array(act_psu_ids_s)
 s1_ids_s = np.array(s1_ids_s)
-
-# Weights
-weights_cls = []
-w_low = len(psus_low) / 25
-w_high = len(psus_high) / 25
-
-# Reuse flattened mask
-forest_mask_flat = forest_mask.ravel()
-
-for i, psu in enumerate(act_psu_ids_s):
-    s_label = s1_ids_s[i]
-    w_1 = w_high if s_label == 1 else w_low
-    
-    # Same Domain Estimation logic applies here
-    pop_in_psu = np.sum((psu_flat == psu) & forest_mask_flat)
-    samp_in_psu = np.sum(act_psu_ids_s == psu)
-    
-    if samp_in_psu == 0:
-        w_2 = 0
-    else:
-        w_2 = pop_in_psu / samp_in_psu
-        
-    weights_cls.append(w_1 * w_2)
 
 y_t_cls = (land_cover.ravel()[sample_cls_idx] == 2).astype(int)
 y_p_cls = (pred_lc.ravel()[sample_cls_idx] == 1).astype(int)
@@ -496,10 +480,11 @@ est_clus_s = TwoStageClusterEstimator(
 ua, ua_se = est_clus_s.user_accuracy(y_t_cls, y_p_cls, label=1)
 pa, pa_se = est_clus_s.producer_accuracy(y_t_cls, y_p_cls, label=1)
 # Use custom cluster bootstrap for F1
-f1, f1_se = est_clus_s.f1_score(y_t_cls, y_p_cls, label=1, se_method='bootstrap')
+f1, f1_se = est_clus_s.f1_score(y_t_cls, y_p_cls, label=1, se_method='bootstrap', n_boot=200)
 
 results["Cluster (Strat)"] = {'UA': (ua, ua_se), 'PA': (pa, pa_se), 'F1': (f1, f1_se)}
 
+pprint(results)
 
 ###############################################################
 # Visualize differences in precision
@@ -510,7 +495,7 @@ results["Cluster (Strat)"] = {'UA': (ua, ua_se), 'PA': (pa, pa_se), 'F1': (f1, f
 #
 # **Comparison of estimators:**
 #
-# 1.  **SRS vs. Post-Stratification:**    You may notice that the Confidence Intervals (CI) for User's Accuracy (UA) 
+# 1.  **SRS vs. Post-Stratification:** #     You may notice that the Confidence Intervals (CI) for User's Accuracy (UA) 
 #     are nearly identical between these two. This is expected when strata are defined 
 #     by the map classes. UA is the probability that a pixel mapped as "Loss" is truly "Loss". 
 #     In post-stratification, this calculation relies almost entirely on samples within the 
@@ -518,7 +503,7 @@ results["Cluster (Strat)"] = {'UA': (ua, ua_se), 'PA': (pa, pa_se), 'F1': (f1, f
 #     for this specific metric is the same, leading to similar precision. Post-stratification 
 #     typically offers greater precision gains for area estimates or Overall Accuracy.
 #
-# 2.  **Stratified Sampling (Buffer):**   This scenario often yields the highest precision (narrowest CIs). By defining a 
+# 2.  **Stratified Sampling (Buffer):** #     This scenario often yields the highest precision (narrowest CIs). By defining a 
 #     specific stratum for the "uncertainty zone" (buffers around detections), we 
 #     allocate more samples to where errors (especially spatial mismatch and omissions) 
 #     are most likely, reducing the variance of the Producer's Accuracy and F1 Score.
@@ -550,21 +535,17 @@ fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
 
 for i, m in enumerate(metrics):
     ax = axes[i]
-    
+
     # Extract Estimates and SEs
     estimates = [results[s][m][0] for s in scenarios]
     se_values = [results[s][m][1] for s in scenarios]
-    
+
     # Calculate 95% Confidence Intervals
     cis = [1.96 * se for se in se_values]
-    
-    # Handle missing SEs (e.g. F1 for Clusters) by making error bar 0 and changing color
-    # or just plotting as is (0 error bar = point)
-    
+
     # Plot
     ax.errorbar(scenarios, estimates, yerr=cis, fmt='o', capsize=5, label='Estimate (95% CI)')
     ax.axhline(true_vals[m], color='green', linestyle='--', label=f'True {m}')
-    
     ax.set_title(metric_titles[m])
     ax.set_xticklabels(scenarios, rotation=45, ha='right')
     ax.grid(axis='y', alpha=0.3)
