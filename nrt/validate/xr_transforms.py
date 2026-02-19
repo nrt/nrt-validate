@@ -111,6 +111,35 @@ class S2MonthlyBest(BaseS2Transform):
         return ds_best
 
 
+@dataclass
+class S2OffsetCorrection(BaseS2Transform):
+    """Apply radiometric offset correction to Sentinel-2 bands.
+
+    Starting from processing baseline 04.00, Sentinel-2 data includes a
+    radiometric offset (1000). This transform subtracts that offset
+    from all spectral bands while preserving the SCL (Scene Classification Layer).
+
+    Args:
+        offset (int): The value to subtract from the bands. Default is 1000.
+    """
+    offset: int = 1000
+
+    def __call__(self, ds: xr.Dataset) -> xr.Dataset:
+        all_bands = {
+            self.blue, self.green, self.red, self.nir,
+            self.re1, self.re2, self.re3, self.swir1, self.swir2
+        }
+        # Intersection ensures we only try to transform bands actually present in ds
+        bands_to_correct = [b for b in all_bands if b in ds.data_vars]
+
+        # 2. Convert to float to avoid underflow/wrap-around in uint16
+        # and to allow for negative values if they occur during processing
+        ds_corrected = ds.copy()
+        for band in bands_to_correct:
+            ds_corrected[band] = ds_corrected[band].astype(np.float32) - self.offset
+        return ds_corrected
+
+
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
