@@ -62,10 +62,11 @@ class Segment(object):
         >>> print(row)
         (1, 6, 18262, 18263, 'forest dieback')
     """
-    def __init__(self, begin: np.datetime64, end: np.datetime64, label=None):
+    def __init__(self, begin: np.datetime64, end: np.datetime64, label=None, validation=None):
         self.begin = begin
         self.end = end
         self.label = label
+        self.validation = validation
 
     @property
     def breakpoints(self):
@@ -84,14 +85,26 @@ class Segment(object):
             Segment: An instance of the Segment class.
         """
         cur = conn.cursor()
-        cur.execute("SELECT id, begin, end, label FROM segments WHERE id = ?", (idx,))
-        row = cur.fetchone()
-        if row:
-            begin = np.datetime64('1970-01-01') + np.timedelta64(row[1], 'D')
-            end = np.datetime64('1970-01-01') + np.timedelta64(row[2], 'D')
-            return cls(begin, end, row[3])
-        else:
-            return None
+        # Check if validation column exists (for backward compatibility during dev)
+        try:
+            cur.execute("SELECT id, begin, end, label, validation FROM segments WHERE id = ?", (idx,))
+            row = cur.fetchone()
+            if row:
+                begin = np.datetime64('1970-01-01') + np.timedelta64(row[1], 'D')
+                end = np.datetime64('1970-01-01') + np.timedelta64(row[2], 'D')
+                label = row[3].strip() if row[3] else None
+                return cls(begin, end, label, row[4])
+        except sqlite3.OperationalError:
+            # Fallback if validation column doesn't exist yet
+            cur.execute("SELECT id, begin, end, label FROM segments WHERE id = ?", (idx,))
+            row = cur.fetchone()
+            if row:
+                begin = np.datetime64('1970-01-01') + np.timedelta64(row[1], 'D')
+                end = np.datetime64('1970-01-01') + np.timedelta64(row[2], 'D')
+                label = row[3].strip() if row[3] else None
+                return cls(begin, end, label)
+        
+        return None
 
     def to_db(self, conn, feature_id):
         """
@@ -102,12 +115,20 @@ class Segment(object):
             feature_id (int): The feature ID to associate with the segment.
         """
         cur = conn.cursor()
+        # Ensure table exists with new schema
         cur.execute('''CREATE TABLE IF NOT EXISTS segments
-                       (id INTEGER PRIMARY KEY, begin INTEGER, end INTEGER, label TEXT, feature_id INTEGER)''')
+                       (id INTEGER PRIMARY KEY, begin INTEGER, end INTEGER, label TEXT, feature_id INTEGER, validation TEXT)''')
+        
+        # Try to add validation column if it doesn't exist (migration for existing DBs)
+        try:
+            cur.execute("ALTER TABLE segments ADD COLUMN validation TEXT")
+        except sqlite3.OperationalError:
+            pass # Column likely already exists
+
         begin = self.begin.astype('datetime64[D]').astype(int).item()
         end = self.end.astype('datetime64[D]').astype(int).item()
-        cur.execute("INSERT INTO segments (begin, end, label, feature_id) VALUES (?, ?, ?, ?)",
-                    (begin, end, self.label, feature_id))
+        cur.execute("INSERT INTO segments (begin, end, label, feature_id, validation) VALUES (?, ?, ?, ?, ?)",
+                    (begin, end, self.label, feature_id, self.validation))
         conn.commit()
         cur.close()
 
@@ -124,13 +145,87 @@ class Segment(object):
             if change['type'] == 'change' and change['name'] == 'value':
                 self.label = change['new']
 
-        segment_info = ipw.Label(value=f"Segment from {self.begin.astype('datetime64[D]')} to {self.end.astype('datetime64[D]')}")
-        dropdown = ipw.Dropdown(options=labels, description='Label:',
-                                value=self.label)
+        date_range_text = f"{self.begin.astype('datetime64[D]')} - {self.end.astype('datetime64[D]')}"
+        segment_info = ipw.HTML(
+            value=f"<div style='text-align: left; white-space: nowrap;'>{date_range_text}</div>",
+            layout=ipw.Layout(width='auto', flex='0 0 auto')
+        )
+        
+        current_options = list(labels)
+        if self.label and self.label not in current_options:
+            current_options.append(self.label)
+        
+        dropdown = ipw.Dropdown(
+            options=current_options,
+            value=self.label,
+            layout=ipw.Layout(width='150px', flex='1 1 auto')  
+        )
         dropdown.observe(on_change)
-        # Use VBox to vertically stack the label and dropdown
-        widget_box = ipw.VBox([segment_info, dropdown],
-                              layout=ipw.Layout(min_height='60px'))
+        
+        label_html = ipw.HTML(
+            value="<div style='text-align: left; white-space: nowrap; margin-right: 5px;'>Label:</div>",
+            layout=ipw.Layout(width='auto', flex='0 0 auto')
+        )
+        
+        top_box = ipw.HBox(
+            [
+                segment_info,
+                ipw.Box(layout=ipw.Layout(width='10px')),  
+                label_html,
+                dropdown
+            ],
+            layout=ipw.Layout(
+                min_height='40px', 
+                width='100%', 
+                align_items='center',
+                justify_content='space-between',  
+                overflow='hidden',
+                padding='0 5px'  
+            )
+        )
+
+        
+        question_label = ipw.Label("Is the LC the same for the box majority?")
+        btn_same = ipw.Button(description="The same", layout=ipw.Layout(width='auto'), icon='check' if self.validation == 'The same' else '')
+        btn_diff = ipw.Button(description="Different", layout=ipw.Layout(width='auto'), icon='check' if self.validation == 'Different' else '')
+        
+
+        def on_btn_click(b):
+            btn_same.icon = ''
+            btn_diff.icon = ''
+            b.icon = 'check'
+            self.validation = b.description
+
+        btn_same.on_click(on_btn_click)
+        btn_diff.on_click(on_btn_click)
+
+        interaction_box = ipw.VBox(
+            [
+                ipw.HBox([question_label], layout=ipw.Layout(justify_content='center')),
+                ipw.HBox([btn_same, btn_diff], layout=ipw.Layout(justify_content='center'))
+            ],
+            layout=ipw.Layout(
+                display='flex' if self.label else 'none',
+                padding='5px 20px',
+                visibility='visible',
+                align_items='center',
+                justify_content='center',
+                width='100%'
+            )
+        )
+
+        def on_change_wrapper(change):
+            on_change(change) 
+            if change['type'] == 'change' and change['name'] == 'value':
+                should_display = bool(change['new'])
+                interaction_box.layout.display = 'flex' if should_display else 'none'
+
+        dropdown.observe(on_change_wrapper)
+
+        if self.label:
+            interaction_box.layout.display = 'flex'
+
+        widget_box = ipw.VBox([top_box, interaction_box], layout=ipw.Layout(width='100%'))
         return widget_box
 
 
@@ -195,7 +290,9 @@ class Segmentation(HasTraits):
             self.segment_widgets = ipw.VBox([],
                                             layout=ipw.Layout(overflow='visible',
                                                               flex='1 1 auto',
-                                                              height='auto'))
+                                                              height='auto',
+                                                              width='100%',
+                                                              align_items='center'))
             self._update_segment_widgets()
 
     @classmethod
