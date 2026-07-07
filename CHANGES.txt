@@ -1,6 +1,18 @@
 Changes
 =======
 
+0.0.1a8 (July 2026)
+-----------------
+- Add Normalized Burn Ratio (NBR) to the list of Sentinel-2 indices
+- Implement multiple spatial accuracy estimators (Stratified Estimator based
+  on Stehman 2014 and TwoStageClusteredEstimator)
+- Implement a bootstrapping strategy for Standard Error (SE) computation
+  (e.g., for F1-score and sampling specificities)
+- Full refactoring of the temporal metrics implementation
+- Add `xr_transform` for Sentinel-2 offset correction
+- Documentation improvements (Spatial and temporal accuracy example galeries)
+- Fix homepage URL in `pyproject.toml`
+
 0.0.1a7 (July 2025)
 -------------------
 - Setup github action to automatically publish tagged commits on pypi
