@@ -92,3 +92,15 @@ class NCDI(BaseS2Index):
         swirr = ds[self.swir1]
         da = (swirc - swirr) / (swirc + swirr)
         return da
+
+class NBR(BaseS2Index):
+    """NBR (Normalized Burn Ratio) calculator for Sentinel 2 data organized in an xarray Dataset
+
+    By default, the nir channel must be named ``'B8A'`` and the swir2 channel
+    ``'B12'`` as per the ``BaseS2Index`` base class. These defaults can be modified
+    at instantiation by passing for instance ``nbr = NBR(nir='B08', swir2='B12')``
+    """
+    def __call__(self, ds):
+        ds = ds.astype(np.float32)
+        da = (ds[self.nir] - ds[self.swir2]) / (ds[self.nir] + ds[self.swir2] + 0.0000001)
+        return da
